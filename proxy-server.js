@@ -260,12 +260,10 @@ app.post('/vacation-request', (req, res) => {
 
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
-  if (!email) {
-    return res.status(400).json({ success: false, error: "Missing email parameter" });
-  }
+  if (!email) return res.status(400).json({ success: false, error: "Missing email" });
 
   try {
-    // Fetch subscriptions
+    // 1️⃣ Get all subscriptions for the email
     const subsResponse = await fetch(
       `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`,
       {
@@ -277,9 +275,10 @@ app.get("/enrollments", async (req, res) => {
     );
 
     const subsData = await subsResponse.json();
-    const subs = subsData.subscriptions || [];
+    const subs = subsData.payload?.subscriptions || [];
     const enrollments = [];
 
+    // 2️⃣ Loop through each subscription to get detailed info
     for (const sub of subs) {
       const detailResponse = await fetch(
         `https://app.sealsubscriptions.com/shopify/merchant/api/subscription/${sub.id}`,
@@ -291,18 +290,22 @@ app.get("/enrollments", async (req, res) => {
       const detail = await detailResponse.json();
       if (!detail.items || detail.items.length === 0) continue;
 
+      // For now we take first item
       const item = detail.items[0];
       const props = item.properties || [];
       const getProp = (key) => props.find((p) => p.key === key)?.value || "";
+
+      const billingAttempts = detail.billing_attempts || [];
+      const nextAttempt = billingAttempts.length ? billingAttempts[0] : null;
 
       enrollments.push({
         subscription_id: sub.id,
         child_first_name: getProp("Child First Name"),
         child_last_name: getProp("Child Last Name"),
         cricclub_id: getProp("Child CricClub ID"),
-        program: getProp("Program Level"),
-        payment_frequency: getProp("Billing Interval"),
-        next_payment_date: detail.billing_attempts?.[0]?.date || "",
+        program: getProp("Program Level") || item.title || "",
+        payment_frequency: getProp("Billing Interval") || sub.billing_interval || "",
+        next_payment_date: nextAttempt?.date || "",
         next_payment_amount: item.price ? `$${item.price}` : "",
         parent_email: email,
       });
@@ -314,7 +317,6 @@ app.get("/enrollments", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 
 app.listen(PORT, () => {
