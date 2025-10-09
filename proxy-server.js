@@ -253,10 +253,10 @@ app.post('/vacation-request', (req, res) => {
     });
 });
 
-const express = require("express");
-const app = express();
+//const express = require("express");
+//const app = express();
 
-const SEAL_TOKEN = process.env.SEAL_TOKEN;
+//const SEAL_TOKEN = process.env.SEAL_TOKEN;
 
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
