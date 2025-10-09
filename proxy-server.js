@@ -20,6 +20,11 @@ app.use(helmet());
 app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json());
 
+// Root check route
+app.get('/', (req, res) => {
+  res.send('Seal Proxy Secure Server is running! ✅');
+});
+
 // Initialize SQLite DB, stored locally as 'vacations.db'
 const db = new sqlite3.Database(path.join(__dirname, 'vacations.db'), (err) => {
   if (err) {
