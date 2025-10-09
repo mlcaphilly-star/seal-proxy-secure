@@ -25,7 +25,7 @@ app.get('/', (req, res) => {
   res.send('Seal Proxy Secure Server is running! ✅');
 });
 
-// Initialize SQLite DB, stored locally as 'vacations.db'
+// Initialize SQLite DB
 const db = new sqlite3.Database(path.join(__dirname, 'vacations.db'), (err) => {
   if (err) {
     console.error('Failed to open SQLite DB:', err);
@@ -49,15 +49,15 @@ db.run(`
   )
 `);
 
-// Endpoint to get all subscriptions for a customer
+// Updated /seal-subscriptions endpoint using email-based query
 app.get('/seal-subscriptions', async (req, res) => {
-  const customerId = req.query.customer_id;
-  if (!customerId || !/^\d+$/.test(customerId)) {
-    return res.status(400).json({ error: "Invalid or missing 'customer_id' query parameter" });
+  const email = req.query.email;
+  if (!email) {
+    return res.status(400).json({ error: "Missing 'email' query parameter" });
   }
 
   try {
-    const apiRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?customer_id=${customerId}`, {
+    const apiRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`, {
       headers: {
         'X-Seal-Token': SEAL_TOKEN,
         'Content-Type': 'application/json',
@@ -70,7 +70,7 @@ app.get('/seal-subscriptions', async (req, res) => {
     }
 
     const data = await apiRes.json();
-    res.json(data);
+    res.json({ success: true, payload: { subscriptions: data.payload.subscriptions || [] } });
 
   } catch (err) {
     console.error('Proxy server internal error:', err);
@@ -170,12 +170,9 @@ app.post('/vacation-request', (req, res) => {
     return res.status(400).json({ success: false, error: 'Missing required fields' });
   }
 
-  // First fetch subscription details to get first billing attempt date for validation
+  // Fetch subscription details to validate first billing attempt
   fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${subscription_id}`, {
-    headers: {
-      'X-Seal-Token': SEAL_TOKEN,
-      'Content-Type': 'application/json',
-    }
+    headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' }
   })
     .then(async sealRes => {
       if (!sealRes.ok) {
@@ -187,28 +184,18 @@ app.post('/vacation-request', (req, res) => {
     })
     .then(subscriptionData => {
       const billingAttempts = subscriptionData.payload.billing_attempts || [];
-      if (billingAttempts.length === 0) {
-        // No billing attempts found, proceed with vacation request normally
-        return null;
-      }
+      if (billingAttempts.length === 0) return null;
 
-      // Get first billing attempt date
-      const firstBillingAttemptDateStr = billingAttempts[0].date;
-      const firstBillingAttemptDate = new Date(firstBillingAttemptDateStr);
-      const vacationStartDate = new Date(from_date);
-
-      if (vacationStartDate > firstBillingAttemptDate) {
-        // Reject request with error message
+      const firstBillingAttemptDate = new Date(billingAttempts[0].date);
+      if (new Date(from_date) > firstBillingAttemptDate) {
         return res.status(400).json({
           success: false,
           error: `You Cannot submit this request now. Please submit it after ${firstBillingAttemptDate.toISOString().slice(0,10)}`
         });
       }
-
       return null;
     })
     .then(() => {
-      // After validation, check overlapping vacation for same customer + child
       const sqlCheck = `
         SELECT * FROM vacation_requests
         WHERE customer_id = ?
@@ -222,21 +209,10 @@ app.post('/vacation-request', (req, res) => {
           )
         LIMIT 1
       `;
-
       db.get(sqlCheck, [customer_id, child_name, from_date, from_date, to_date, to_date, from_date, to_date], (err, row) => {
-        if (err) {
-          console.error('SQLite error on overlap check:', err);
-          return res.status(500).json({ success: false, error: 'Database error' });
-        }
+        if (err) return res.status(500).json({ success: false, error: 'Database error' });
+        if (row) return res.status(409).json({ success: false, error: `You have already submitted a vacation request from ${row.from_date} to ${row.to_date}. Overlapping requests are not allowed.` });
 
-        if (row) {
-          return res.status(409).json({
-            success: false,
-            error: `You have already submitted a vacation request from ${row.from_date} to ${row.to_date}. Overlapping requests are not allowed.`
-          });
-        }
-
-        // Insert new vacation request
         const sqlInsert = `
           INSERT INTO vacation_requests (
             customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id
@@ -244,60 +220,36 @@ app.post('/vacation-request', (req, res) => {
         `;
 
         db.run(sqlInsert, [customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id], async function(insertErr) {
-          if (insertErr) {
-            console.error('SQLite insert error:', insertErr);
-            return res.status(500).json({ success: false, error: 'Failed to save vacation request' });
-          }
+          if (insertErr) return res.status(500).json({ success: false, error: 'Failed to save vacation request' });
 
           try {
-            // After insert, fetch subscription again to get billing attempts and shift them
             const sealRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${subscription_id}`, {
-              headers: {
-                'X-Seal-Token': SEAL_TOKEN,
-                'Content-Type': 'application/json',
-              }
+              headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' }
             });
 
             if (!sealRes.ok) {
               const errText = await sealRes.text();
-              console.error('Seal API fetch subscription failed:', errText);
               return res.status(502).json({ success: false, error: 'Failed to fetch subscription details from Seal' });
             }
 
             const subscriptionData = await sealRes.json();
             const billingAttempts = subscriptionData.payload.billing_attempts || [];
-
-            // Shift billing attempt dates by shift_days
             const updatedBillingAttempts = billingAttempts.map(attempt => {
               const origDate = new Date(attempt.date);
               origDate.setDate(origDate.getDate() + shift_days);
-              return {
-                ...attempt,
-                original_date: attempt.date,
-                date: origDate.toISOString(),
-              };
+              return { ...attempt, original_date: attempt.date, date: origDate.toISOString() };
             });
 
-            return res.json({
-              success: true,
-              updated: {
-                billing_attempts: updatedBillingAttempts,
-              },
-              id: this.lastID,
-            });
+            return res.json({ success: true, updated: { billing_attempts: updatedBillingAttempts }, id: this.lastID });
 
           } catch (fetchErr) {
-            console.error('Error fetching subscription or processing:', fetchErr);
             return res.status(500).json({ success: false, error: 'Error processing subscription billing attempts' });
           }
         });
       });
     })
     .catch(err => {
-      console.error('Error during vacation request processing:', err);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, error: 'Internal server error' });
-      }
+      if (!res.headersSent) res.status(500).json({ success: false, error: 'Internal server error' });
     });
 });
 
