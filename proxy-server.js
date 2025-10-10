@@ -363,6 +363,15 @@ app.get('/vacations', (req, res) => {
     res.json({ success: true, vacations: rows });
   });
 });
+// Temporary route to fetch all vacations
+app.get("/debug-vacations", async (req, res) => {
+  try {
+    const vacations = await db.all("SELECT * FROM vacations");
+    res.json({ success: true, vacations });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
 
 
 app.listen(PORT, () => {
