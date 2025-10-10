@@ -260,10 +260,11 @@ app.post('/vacation-request', (req, res) => {
 
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
-  if (!email) return res.status(400).json({ success: false, error: "Missing email" });
+  if (!email)
+    return res.status(400).json({ success: false, error: "Missing email" });
 
   try {
-    // 1️⃣ Fetch subscriptions by email
+    // Step 1️⃣: Get subscriptions by email
     const subsResponse = await fetch(
       `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`,
       {
@@ -274,70 +275,63 @@ app.get("/enrollments", async (req, res) => {
       }
     );
 
-    if (!subsResponse.ok) {
-      const text = await subsResponse.text();
-      return res
-        .status(subsResponse.status)
-        .json({ success: false, error: `Seal API error: ${subsResponse.status} - ${text}` });
-    }
-
     const subsData = await subsResponse.json();
     const subs = subsData.payload?.subscriptions || [];
-
     const enrollments = [];
 
-    // 2️⃣ Loop through each subscription
+    // Step 2️⃣: For each subscription, get full detail by ID
     for (const sub of subs) {
-      try {
-        const detailRes = await fetch(
-          `https://app.sealsubscriptions.com/shopify/merchant/api/subscription/${sub.id}`,
-          {
-            headers: { "X-Seal-Token": SEAL_TOKEN, "Content-Type": "application/json" },
-          }
-        );
-
-        // Handle empty or invalid responses
-        let detail = null;
-        if (detailRes.ok) {
-          const text = await detailRes.text();
-          detail = text ? JSON.parse(text) : null;
+      const detailResponse = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
+        {
+          headers: {
+            "X-Seal-Token": SEAL_TOKEN,
+            "Content-Type": "application/json",
+          },
         }
+      );
 
-        if (!detail || !detail.items || detail.items.length === 0) continue;
-
-        const item = detail.items[0];
-        const props = item.properties || [];
-        const getProp = (key) => props.find((p) => p.key === key)?.value || "";
-
-        const billingAttempts = detail.billing_attempts || [];
-        const nextAttempt = billingAttempts.length ? billingAttempts[0] : null;
-
-        enrollments.push({
-          subscription_id: sub.id,
-          child_first_name: getProp("Child First Name"),
-          child_last_name: getProp("Child Last Name"),
-          cricclub_id: getProp("Child CricClub ID"),
-          program: getProp("Program Level") || item.title || "",
-          payment_frequency: getProp("Billing Interval") || sub.billing_interval || "",
-          next_payment_date: nextAttempt?.date || "",
-          next_payment_amount: item.price ? `$${item.price}` : "",
-          parent_email: email,
-        });
-      } catch (innerErr) {
-        console.warn(`Failed to fetch details for subscription ${sub.id}:`, innerErr.message);
-        continue; // continue with next subscription
+      if (!detailResponse.ok) {
+        const errorText = await detailResponse.text();
+        console.error(`Seal detail fetch failed for ${sub.id}:`, errorText);
+        continue; // skip this one
       }
+
+      const detailData = await detailResponse.json();
+      const detail = detailData.payload;
+
+      if (!detail.items || detail.items.length === 0) continue;
+      const item = detail.items[0];
+      const props = item.properties || [];
+
+      const getProp = (key) =>
+        props.find((p) => p.key === key)?.value || "";
+
+      const billingAttempts = detail.billing_attempts || [];
+      const nextAttempt = billingAttempts.length ? billingAttempts[0] : null;
+
+      enrollments.push({
+        subscription_id: sub.id,
+        child_first_name: getProp("Child First Name"),
+        child_last_name: getProp("Child Last Name"),
+        cricclub_id: getProp("Child CricClub ID"),
+        program: getProp("Program Level") || item.title || "",
+        payment_frequency:
+          getProp("Billing Interval") || sub.billing_interval || "",
+        next_payment_date: nextAttempt?.date || "",
+        next_payment_amount: item.price ? `$${item.price}` : "",
+        parent_email: email,
+      });
     }
 
-    // 3️⃣ Send final response once
+    // Step 3️⃣: Send final response after all loops
     res.json({ success: true, enrollments });
+
   } catch (err) {
     console.error("Error fetching enrollments:", err);
-    if (!res.headersSent)
-      res.status(500).json({ success: false, error: "Internal server error" });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 
 
