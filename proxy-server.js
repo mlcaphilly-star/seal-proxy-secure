@@ -340,6 +340,29 @@ app.get("/enrollments", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+// Get vacations for a child
+app.get('/vacations', (req, res) => {
+  const { customer_id, child_name } = req.query;
+  if (!customer_id || !child_name) {
+    return res.status(400).json({ success: false, error: 'Missing parameters' });
+  }
+
+  const sql = `
+    SELECT from_date, to_date, shift_days, reason
+    FROM vacation_requests
+    WHERE customer_id = ? AND child_name = ?
+    ORDER BY from_date DESC
+  `;
+
+  db.all(sql, [customer_id, child_name], (err, rows) => {
+    if (err) {
+      console.error('DB error fetching vacations:', err);
+      return res.status(500).json({ success: false, error: 'Database error' });
+    }
+
+    res.json({ success: true, vacations: rows });
+  });
+});
 
 
 app.listen(PORT, () => {
