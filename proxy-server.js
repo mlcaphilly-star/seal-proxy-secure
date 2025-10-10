@@ -260,79 +260,96 @@ app.post('/vacation-request', (req, res) => {
 
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
-  if (!email)
-    return res.status(400).json({ success: false, error: "Missing email" });
+  if (!email) {
+    return res.status(400).json({ success: false, error: "Missing email parameter" });
+  }
 
   try {
-    // Step 1️⃣: Get subscriptions by email
+    // Step 1: Fetch subscriptions by email
     const subsResponse = await fetch(
-      `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`,
+      `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${email}`,
       {
         headers: {
-          "X-Seal-Token": SEAL_TOKEN,
+          Authorization: `Bearer ${process.env.SEAL_API_KEY}`,
           "Content-Type": "application/json",
         },
       }
     );
 
     const subsData = await subsResponse.json();
-    const subs = subsData.payload?.subscriptions || [];
-    const enrollments = [];
 
-    // Step 2️⃣: For each subscription, get full detail by ID
-    for (const sub of subs) {
-      const detailResponse = await fetch(
-        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
-        {
-          headers: {
-            "X-Seal-Token": SEAL_TOKEN,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!detailResponse.ok) {
-        const errorText = await detailResponse.text();
-        console.error(`Seal detail fetch failed for ${sub.id}:`, errorText);
-        continue; // skip this one
-      }
-
-      const detailData = await detailResponse.json();
-      const detail = detailData.payload;
-
-      if (!detail.items || detail.items.length === 0) continue;
-      const item = detail.items[0];
-      const props = item.properties || [];
-
-      const getProp = (key) =>
-        props.find((p) => p.key === key)?.value || "";
-
-      const billingAttempts = detail.billing_attempts || [];
-      const nextAttempt = billingAttempts.length ? billingAttempts[0] : null;
-
-      enrollments.push({
-        subscription_id: sub.id,
-        child_first_name: getProp("Child First Name"),
-        child_last_name: getProp("Child Last Name"),
-        cricclub_id: getProp("Child CricClub ID"),
-        program: getProp("Program Level") || item.title || "",
-        payment_frequency:
-          getProp("Billing Interval") || sub.billing_interval || "",
-        next_payment_date: nextAttempt?.date || "",
-        next_payment_amount: item.price ? `$${item.price}` : "",
-        parent_email: email,
-      });
+    if (!subsData.success || !subsData.payload?.subscriptions) {
+      return res.json({ success: true, enrollments: [] });
     }
 
-    // Step 3️⃣: Send final response after all loops
-    res.json({ success: true, enrollments });
+    // Step 2: Filter only active subscriptions
+    const activeSubs = subsData.payload.subscriptions.filter(
+      (sub) => sub.status === "ACTIVE"
+    );
 
-  } catch (err) {
-    console.error("Error fetching enrollments:", err);
-    res.status(500).json({ success: false, error: err.message });
+    const enrollments = [];
+
+    // Step 3: For each active subscription, re-query for item properties
+    for (const sub of activeSubs) {
+      try {
+        const subDetailsResponse = await fetch(
+          `https://app.sealsubscriptions.com/shopify/merchant/api/subscription/${sub.id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.SEAL_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        const subDetailsText = await subDetailsResponse.text();
+
+        // Some Seal endpoints return empty body; safely parse
+        if (!subDetailsText.trim()) continue;
+
+        const subDetails = JSON.parse(subDetailsText);
+
+        if (!subDetails.payload?.items) continue;
+
+        // Step 4: Loop through all items (multiple children)
+        for (const item of subDetails.payload.items) {
+          const properties = {};
+          if (item.properties) {
+            for (const prop of item.properties) {
+              properties[prop.name] = prop.value;
+            }
+          }
+
+          enrollments.push({
+            subscription_id: sub.id,
+            child_first_name: properties["Child First Name"] || "",
+            child_last_name: properties["Child Last Name"] || "",
+            cricclub_id: properties["CricClubs ID"] || "",
+            program: item.title || subDetails.payload.name || "",
+            payment_frequency:
+              sub.delivery_interval || sub.billing_interval || "",
+            next_payment_date: subDetails.payload.next_payment_date || "",
+            next_payment_amount: subDetails.payload.next_payment_amount
+              ? `$${subDetails.payload.next_payment_amount}`
+              : "",
+            parent_email: sub.email,
+          });
+        }
+      } catch (err) {
+        console.error(`Error processing subscription ${sub.id}:`, err);
+      }
+    }
+
+    // Step 5: Respond once at the end
+    return res.json({ success: true, enrollments });
+  } catch (error) {
+    console.error("Error fetching enrollments:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Internal server error",
+    });
   }
 });
-
 
 
 app.listen(PORT, () => {
