@@ -293,7 +293,7 @@ app.get("/enrollments", async (req, res) => {
       );
 	
 	   if (!detailResponse.ok) {
-      const errorText = await apiRes.text();
+      const errorText = await detailResponse.text();
       return res.status(detailResponse.status).json({ error: `Seal API error: ${detailResponse.status} - ${errorText}` });
     }	
 	
