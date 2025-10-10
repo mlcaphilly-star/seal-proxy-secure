@@ -11,13 +11,18 @@ const SEAL_TOKEN = process.env.SEAL_TOKEN;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
 
 // Postgres pool
+// Use your Render Postgres URL
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT,
+  connectionString: 'postgresql://apps:pI9skLOqhlZsVTCpUae0E4YnvgzhG7o8@dpg-d3k8q9l6ubrc73dp5afg-a.oregon-postgres.render.com/vacation_db_gdge',
+  ssl: {
+    rejectUnauthorized: false  // Required for Render Postgres
+  }
 });
+// Test connection
+pool.connect()
+  .then(() => console.log('Connected to Postgres'))
+  .catch(err => console.error('Postgres connection error', err));
+
 
 app.use(helmet());
 app.use(cors({ origin: ALLOWED_ORIGIN }));
