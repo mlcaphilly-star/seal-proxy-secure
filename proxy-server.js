@@ -257,78 +257,87 @@ app.post('/vacation-request', (req, res) => {
 //const app = express();
 
 //const SEAL_TOKEN = process.env.SEAL_TOKEN;
-
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
-  if (!email)
-    return res.status(400).json({ success: false, error: "Missing email" });
+  if (!email) return res.status(400).json({ success: false, error: "Missing email" });
 
   try {
-    // Step 1️⃣: Get subscriptions by email
+    // 1️⃣ Get all subscriptions for the email
     const subsResponse = await fetch(
-      `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`,
-      {
-        headers: {
-          "X-Seal-Token": SEAL_TOKEN,
-          "Content-Type": "application/json",
-        },
-      }
+      `https://seal-proxy-secure.onrender.com/seal-subscriptions?email=${encodeURIComponent(email)}`
     );
-
     const subsData = await subsResponse.json();
     const subs = subsData.payload?.subscriptions || [];
+
     const enrollments = [];
 
-    // Step 2️⃣: For each subscription, get full detail by ID
+    // 2️⃣ Loop through each subscription to get detailed info
     for (const sub of subs) {
       const detailResponse = await fetch(
-        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
-        {
-          headers: {
-            "X-Seal-Token": SEAL_TOKEN,
-            "Content-Type": "application/json",
-          },
-        }
+        `https://seal-proxy-secure.onrender.com/seal-subscription?id=${sub.id}`
       );
 
       if (!detailResponse.ok) {
         const errorText = await detailResponse.text();
-        console.error(`Seal detail fetch failed for ${sub.id}:`, errorText);
-        continue; // skip this one
+        console.error(`Seal API error for subscription ${sub.id}: ${errorText}`);
+        continue; // skip this subscription
       }
 
       const detailData = await detailResponse.json();
-      const detail = detailData.payload;
+      const items = detailData.payload.items || [];
+      const billingAttempts = detailData.payload.billing_attempts || [];
 
-      if (!detail.items || detail.items.length === 0) continue;
-      const item = detail.items[0];
-      const props = item.properties || [];
+      // 3️⃣ Loop through items (children)
+      for (const item of items) {
+        const props = item.properties || [];
+        const getProp = (key) => props.find((p) => p.key === key)?.value || "";
 
-      const getProp = (key) =>
-        props.find((p) => p.key === key)?.value || "";
+        // 4️⃣ Fetch vacations from SQLite for this child
+        const vacations = await new Promise((resolve, reject) => {
+          db.all(
+            `SELECT from_date, to_date, shift_days, reason
+             FROM vacation_requests
+             WHERE customer_id = ? AND child_name = ?`,
+            [sub.customer_id || email, getProp("Child First Name")],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows || []);
+            }
+          );
+        });
 
-      const billingAttempts = detail.billing_attempts || [];
-      const nextAttempt = billingAttempts.length ? billingAttempts[0] : null;
+        // 5️⃣ Take first 4 billing attempts for the child
+        const nextBilling = billingAttempts.slice(0, 4).map((b, idx) => {
+          const startDate = idx === 0 ? b.date : billingAttempts[idx - 1].date;
+          const endDate = b.date;
+          const amount = item.price ? `$${item.price}` : "";
+          return {
+            period_start: startDate,
+            period_end: endDate,
+            date: b.date,
+            amount,
+          };
+        });
 
-      enrollments.push({
-        subscription_id: sub.id,
-        child_first_name: getProp("Child First Name"),
-        child_last_name: getProp("Child Last Name"),
-        cricclub_id: getProp("Child CricClub ID"),
-        program: getProp("Program Level") || item.title || "",
-        payment_frequency:
-          getProp("Billing Interval") || sub.billing_interval || "",
-        next_payment_date: nextAttempt?.date || "",
-        next_payment_amount: item.price ? `$${item.price}` : "",
-        parent_email: email,
-      });
+        enrollments.push({
+          subscription_id: sub.id,
+          child_first_name: getProp("Child First Name"),
+          child_last_name: getProp("Child Last Name"),
+          cricclub_id: getProp("Child CricClub ID"),
+          program: getProp("Program Level") || item.title || "",
+          payment_frequency: getProp("Billing Interval") || sub.billing_interval || "",
+          next_payment_date: nextBilling.length ? nextBilling[0].date : "",
+          next_payment_amount: item.price ? `$${item.price}` : "",
+          parent_email: email,
+          billing_attempts: nextBilling,
+          vacations,
+        });
+      }
     }
 
-    // Step 3️⃣: Send final response after all loops
     res.json({ success: true, enrollments });
-
   } catch (err) {
-    console.error("Error fetching enrollments:", err);
+    console.error("Error fetching enrollments:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
