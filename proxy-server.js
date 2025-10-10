@@ -46,7 +46,62 @@ CREATE TABLE IF NOT EXISTS vacation_requests (
 app.get('/', (req, res) => {
   res.send('Seal Proxy Secure Server is running! ✅');
 });
+app.get('/seal-subscriptions', async (req, res) => {
+  const email = req.query.email;
+  if (!email) {
+    return res.status(400).json({ error: "Missing 'email' query parameter" });
+  }
 
+  try {
+    const apiRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`, {
+      headers: {
+        'X-Seal-Token': SEAL_TOKEN,
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!apiRes.ok) {
+      const errorText = await apiRes.text();
+      return res.status(apiRes.status).json({ error: `Seal API error: ${apiRes.status} - ${errorText}` });
+    }
+
+    const data = await apiRes.json();
+    res.json({ success: true, payload: { subscriptions: data.payload.subscriptions || [] } });
+
+  } catch (err) {
+    console.error('Proxy server internal error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Endpoint to get detailed subscription info by subscription id
+app.get('/seal-subscription', async (req, res) => {
+  const subscriptionId = req.query.id;
+  if (!subscriptionId || !/^\d+$/.test(subscriptionId)) {
+    return res.status(400).json({ error: "Invalid or missing 'id' query parameter" });
+  }
+
+  try {
+    const apiRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${subscriptionId}`, {
+      headers: {
+        'X-Seal-Token': SEAL_TOKEN,
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!apiRes.ok) {
+      const errorText = await apiRes.text();
+      return res.status(apiRes.status).json({ error: `Seal API error: ${apiRes.status} - ${errorText}` });
+    }
+
+    const data = await apiRes.json();
+    res.json(data);
+
+  } catch (err) {
+    console.error('Proxy server internal error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // Enrollments endpoint (same as before)
 app.get("/enrollments", async (req, res) => {
   const email = req.query.email;
