@@ -275,6 +275,11 @@ app.get("/enrollments", async (req, res) => {
     );
 
     const subsData = await subsResponse.json();
+	
+	
+    res.json({ success: true, payload: { subscriptions: subsData.payload.subscriptions || [] } });
+
+	
     const subs = subsData.payload?.subscriptions || [];
     const enrollments = [];
 
@@ -286,8 +291,18 @@ app.get("/enrollments", async (req, res) => {
           headers: { "X-Seal-Token": SEAL_TOKEN, "Content-Type": "application/json" },
         }
       );
-
+	
+	   if (!detailResponse.ok) {
+      const errorText = await apiRes.text();
+      return res.status(detailResponse.status).json({ error: `Seal API error: ${detailResponse.status} - ${errorText}` });
+    }	
+	
       const detail = await detailResponse.json();
+	  
+	
+
+    detailResponse.json(data);
+	  
       if (!detail.items || detail.items.length === 0) continue;
 
       // For now we take first item
@@ -311,12 +326,13 @@ app.get("/enrollments", async (req, res) => {
       });
     }
 
-    res.json({ success: true, enrollments });
+    detailResponse.json({ success: true, enrollments });
   } catch (err) {
     console.error("Error fetching enrollments:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 app.listen(PORT, () => {
