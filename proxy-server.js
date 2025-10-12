@@ -339,6 +339,92 @@ app.post('/vacation-request', async (req, res) => {
   }
 });
 
+// -------------------- Modify vacation (adjust billing if active) --------------------
+app.post('/vacation-modify', async (req, res) => {
+  const { vacation_id, new_to_date } = req.body;
+
+  if (!vacation_id || !new_to_date) {
+    return res.status(400).json({ success: false, error: 'Missing required fields' });
+  }
+
+  try {
+    // Fetch the vacation record
+    const { rows } = await pool.query('SELECT * FROM vacation_requests WHERE id = $1', [vacation_id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Vacation not found' });
+    }
+
+    const vacation = rows[0];
+    const today = new Date();
+    const start = new Date(vacation.from_date);
+    const end = new Date(vacation.to_date);
+    const newEnd = new Date(new_to_date);
+
+    // Rule: can modify only if vacation is ongoing (today between from/to)
+    if (!(today >= start && today <= end)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Vacation cannot be modified because it is not currently active.',
+      });
+    }
+
+    // Compute change in duration (days)
+    const oldDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+    const newDays = Math.ceil((newEnd - start) / (1000 * 60 * 60 * 24));
+    const changeInDays = newDays - oldDays;
+
+    // Update vacation record
+    await pool.query(
+      'UPDATE vacation_requests SET to_date = $1 WHERE id = $2',
+      [new_to_date, vacation_id]
+    );
+
+    // Adjust billing via your existing Seal reschedule endpoint
+    const shiftResponse = await adjustBilling(
+      vacation.subscription_id,
+      changeInDays
+    );
+
+    res.json({
+      success: true,
+      message: `Vacation updated successfully. Shifted billing by ${changeInDays} days.`,
+      shift_days: changeInDays,
+      seal_response: shiftResponse,
+    });
+  } catch (err) {
+    console.error('Error modifying vacation:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// Helper function to adjust billing schedule in Seal
+async function adjustBilling(subscriptionId, shiftDays) {
+  try {
+    const response = await fetch(
+      'https://app.sealsubscriptions.com/shopify/merchant/api/subscription-billing-attempt',
+      {
+        method: 'PUT',
+        headers: {
+          'X-Seal-Token': SEAL_TOKEN,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          subscription_id: subscriptionId,
+          shift_days: shiftDays,
+          action: 'reschedule',
+          reset_schedule: true,
+        }),
+      }
+    );
+
+    return await response.json();
+  } catch (err) {
+    console.error('Billing adjustment error:', err);
+    return { success: false, error: 'Failed to update billing schedule' };
+  }
+}
+
+
 // -------------------- Debug vacations (all rows) --------------------
 app.get('/debug-vacations', async (req, res) => {
   try {
