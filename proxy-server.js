@@ -130,7 +130,7 @@ app.put('/reschedule-billing-attempt', async (req, res) => {
         time,
         timezone,
         action: "reschedule",
-        reset_schedule: true
+        reset_schedule: "true"
       })
     });
 
@@ -412,7 +412,7 @@ async function adjustBilling(subscriptionId, shiftDays) {
           subscription_id: subscriptionId,
           shift_days: shiftDays,
           action: 'reschedule',
-          reset_schedule: true,
+          reset_schedule: "true",
         }),
       }
     );
