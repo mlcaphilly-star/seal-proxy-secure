@@ -245,6 +245,50 @@ app.get('/vacations', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Database error' });
   }
 });
+const nodemailer = require('nodemailer');
+
+// IONOS SMTP transporter
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: Number(process.env.EMAIL_PORT),
+  secure: false, // true if port 465
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// Function to send vacation confirmation email
+async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
+  const rowsHtml = updatedBillingAttempts.map(attempt => `
+    <tr>
+      <td>${attempt.original_date.slice(0,10)}</td>
+      <td>${attempt.date.slice(0,10)}</td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <p>Hi,</p>
+    <p>Your vacation request has been processed. Here are the updated billing attempts:</p>
+    <table border="1" cellpadding="5" cellspacing="0">
+      <tr>
+        <th>Original Date</th>
+        <th>New Date</th>
+      </tr>
+      ${rowsHtml}
+    </table>
+    <p>Thank you,<br>MLCA Coaching</p>
+  `;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: toEmail,
+    subject: 'Vacation Request Confirmation',
+    html,
+  });
+
+  console.log('Vacation confirmation email sent to', toEmail);
+}
 
 // -------------------- Submit vacation request (with overlap check + paid schedule validation) --------------------
 app.post('/vacation-request', async (req, res) => {
@@ -278,7 +322,7 @@ app.post('/vacation-request', async (req, res) => {
     const subscriptionData = await sealRes.json();
     const billingAttempts = subscriptionData.payload?.billing_attempts || [];
 
-    // 2) Compute firstBillingAttemptDate based on **unpaid/future attempts**
+    // 2) Compute firstBillingAttemptDate based on unpaid/future attempts
     let firstBillingAttemptDate = null;
     const now = new Date();
     if (billingAttempts.length > 0) {
@@ -338,6 +382,13 @@ app.post('/vacation-request', async (req, res) => {
       return { ...attempt, original_date: attempt.date, date: newDate.toISOString() };
     });
 
+    // 6) Send confirmation email
+    try {
+      await sendVacationConfirmationEmail(subscriptionData.payload.email, updatedBillingAttempts);
+    } catch (emailErr) {
+      console.error('Error sending confirmation email:', emailErr);
+    }
+
     return res.json({ 
       success: true, 
       updated: { billing_attempts: updatedBillingAttempts }, 
@@ -349,6 +400,7 @@ app.post('/vacation-request', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
 
 
 // -------------------- Modify vacation (adjust billing if active) --------------------
