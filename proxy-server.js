@@ -247,7 +247,7 @@ app.get('/vacations', async (req, res) => {
 });
 const nodemailer = require('nodemailer');
 
-/ IONOS SMTP transporter
+// IONOS SMTP transporter
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,   // smtp.ionos.com
   port: Number(process.env.EMAIL_PORT), // 587
