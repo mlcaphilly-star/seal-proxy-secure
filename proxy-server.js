@@ -246,7 +246,7 @@ app.get('/vacations', async (req, res) => {
   }
 });
 
-// -------------------- Submit vacation request (with overlap check + first-billing validation) --------------------
+// -------------------- Submit vacation request (with overlap check + paid schedule validation) --------------------
 app.post('/vacation-request', async (req, res) => {
   const {
     customer_id,
@@ -259,13 +259,12 @@ app.post('/vacation-request', async (req, res) => {
     billing_attempt_id
   } = req.body;
 
-  // Keep billing_attempt_id required if your UI always supplies it.
   if (!customer_id || !child_name || !from_date || !to_date || !shift_days || !subscription_id || (billing_attempt_id === undefined)) {
     return res.status(400).json({ success: false, error: 'Missing required fields' });
   }
 
   try {
-    // 1) Validate that from_date is not after first billing attempt (same logic as SQLite original)
+    // 1) Fetch subscription details from Seal
     const sealRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${encodeURIComponent(subscription_id)}`, {
       headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' }
     });
@@ -279,17 +278,25 @@ app.post('/vacation-request', async (req, res) => {
     const subscriptionData = await sealRes.json();
     const billingAttempts = subscriptionData.payload?.billing_attempts || [];
 
+    // 2) Compute firstBillingAttemptDate based on **unpaid/future attempts**
+    let firstBillingAttemptDate = null;
+    const now = new Date();
     if (billingAttempts.length > 0) {
-      const firstBillingAttemptDate = new Date(billingAttempts[0].date);
-      if (new Date(from_date) > firstBillingAttemptDate) {
-        return res.status(400).json({
-          success: false,
-          error: `You Cannot submit this request now. Please submit it after ${firstBillingAttemptDate.toISOString().slice(0,10)}`
-        });
-      }
+      const nextAttempt = billingAttempts.find(attempt => {
+        const attemptDate = new Date(attempt.date);
+        return (!attempt.status || attempt.status.toLowerCase() !== 'completed') && attemptDate >= now;
+      });
+      firstBillingAttemptDate = nextAttempt ? new Date(nextAttempt.date) : new Date(billingAttempts[0].date);
     }
 
-    // 2) Check for overlapping vacations (equivalent to your SQLite check)
+    if (firstBillingAttemptDate && new Date(from_date) > firstBillingAttemptDate) {
+      return res.status(400).json({
+        success: false,
+        error: `You cannot submit this request now. Please submit it on or before ${firstBillingAttemptDate.toISOString().slice(0,10)}`
+      });
+    }
+
+    // 3) Check for overlapping vacations
     const overlapSql = `
       SELECT * FROM vacation_requests
       WHERE customer_id = $1
@@ -313,7 +320,7 @@ app.post('/vacation-request', async (req, res) => {
       });
     }
 
-    // 3) Insert vacation
+    // 4) Insert vacation request
     const insertSql = `
       INSERT INTO vacation_requests
       (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id)
@@ -323,21 +330,26 @@ app.post('/vacation-request', async (req, res) => {
     const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null];
     const insertResult = await pool.query(insertSql, insertParams);
 
-    // 4) Prepare updated billing attempts (shifted by shift_days) for confirmation (do not persist here)
-    const updatedBillingAttempts = (billingAttempts || []).map(attempt => {
+    // 5) Prepare updated billing attempts (shifted by shift_days) for confirmation
+    const updatedBillingAttempts = billingAttempts.map(attempt => {
       const origDate = new Date(attempt.date);
       const newDate = new Date(origDate);
       newDate.setDate(newDate.getDate() + Number(shift_days));
       return { ...attempt, original_date: attempt.date, date: newDate.toISOString() };
     });
 
-    return res.json({ success: true, updated: { billing_attempts: updatedBillingAttempts }, id: insertResult.rows[0].id });
+    return res.json({ 
+      success: true, 
+      updated: { billing_attempts: updatedBillingAttempts }, 
+      id: insertResult.rows[0].id 
+    });
 
   } catch (err) {
     console.error('Error submitting vacation request:', err);
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
 
 // -------------------- Modify vacation (adjust billing if active) --------------------
 app.post('/vacation-modify', async (req, res) => {
