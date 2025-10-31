@@ -247,15 +247,19 @@ app.get('/vacations', async (req, res) => {
 });
 const nodemailer = require('nodemailer');
 
-// IONOS SMTP transporter
+/ IONOS SMTP transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT),
-  secure: false, // true if port 465
+  host: process.env.EMAIL_HOST,   // smtp.ionos.com
+  port: Number(process.env.EMAIL_PORT), // 587
+  secure: false,                   // false for STARTTLS on port 587
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER,  // your IONOS email
+    pass: process.env.EMAIL_PASS,  // your IONOS email password
   },
+  tls: {
+    ciphers: 'TLSv1.2',
+    rejectUnauthorized: false      // helps if Render blocks some certs
+  }
 });
 
 // Function to send vacation confirmation email
