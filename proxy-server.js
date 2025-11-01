@@ -245,24 +245,11 @@ app.get('/vacations', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Database error' });
   }
 });
-const nodemailer = require('nodemailer');
 
-// IONOS SMTP transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,   // smtp.ionos.com
-  port: Number(process.env.EMAIL_PORT), // 587
-  secure: false,                   // false for STARTTLS on port 587
-  auth: {
-    user: process.env.EMAIL_USER,  // your IONOS email
-    pass: process.env.EMAIL_PASS,  // your IONOS email password
-  },
-  tls: {
-    ciphers: 'TLSv1.2',
-    rejectUnauthorized: false      // helps if Render blocks some certs
-  }
-});
+// SG Mail
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Function to send vacation confirmation email
 async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
   const rowsHtml = updatedBillingAttempts.map(attempt => `
     <tr>
@@ -284,15 +271,17 @@ async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
     <p>Thank you,<br>MLCA Coaching</p>
   `;
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
+  const msg = {
     to: toEmail,
+    from: process.env.EMAIL_FROM,
     subject: 'Vacation Request Confirmation',
     html,
-  });
+  };
 
+  await sgMail.send(msg);
   console.log('Vacation confirmation email sent to', toEmail);
 }
+
 
 // -------------------- Submit vacation request (with overlap check + paid schedule validation) --------------------
 app.post('/vacation-request', async (req, res) => {
@@ -371,8 +360,8 @@ app.post('/vacation-request', async (req, res) => {
     // 4) Insert vacation request
     const insertSql = `
       INSERT INTO vacation_requests
-      (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id, email_sent)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'N')
       RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, subscription_id, billing_attempt_id
     `;
     const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null];
@@ -386,12 +375,7 @@ app.post('/vacation-request', async (req, res) => {
       return { ...attempt, original_date: attempt.date, date: newDate.toISOString() };
     });
 
-    // 6) Send confirmation email
-    try {
-      await sendVacationConfirmationEmail(subscriptionData.payload.email, updatedBillingAttempts);
-    } catch (emailErr) {
-      console.error('Error sending confirmation email:', emailErr);
-    }
+    
 
     return res.json({ 
       success: true, 
