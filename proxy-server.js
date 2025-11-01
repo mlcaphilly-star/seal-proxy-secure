@@ -314,6 +314,7 @@ app.post('/vacation-request', async (req, res) => {
 
     const subscriptionData = await sealRes.json();
     const billingAttempts = subscriptionData.payload?.billing_attempts || [];
+	const customerEmail = subscriptionData.payload?.email;
 
     // 2) Compute firstBillingAttemptDate based on unpaid/future attempts
     let firstBillingAttemptDate = null;
@@ -360,11 +361,11 @@ app.post('/vacation-request', async (req, res) => {
     // 4) Insert vacation request
     const insertSql = `
       INSERT INTO vacation_requests
-      (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id, email_sent)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'N')
-      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, subscription_id, billing_attempt_id
+      (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id, email_sent,email_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'N',$9)
+      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, subscription_id, billing_attempt_id,email_id
     `;
-    const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null];
+    const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null,customerEmail];
     const insertResult = await pool.query(insertSql, insertParams);
 
     // 5) Prepare updated billing attempts (shifted by shift_days) for confirmation
