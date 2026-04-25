@@ -11,6 +11,9 @@ const PORT = process.env.PORT || 3000;
 const SEAL_TOKEN = process.env.SEAL_TOKEN;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
 
+const isActiveSubscription = (subscription = {}) =>
+  (subscription.status || '').toUpperCase() === 'ACTIVE';
+
 if (!SEAL_TOKEN || !ALLOWED_ORIGIN) {
   console.error('ERROR: SEAL_TOKEN and ALLOWED_ORIGIN must be set in .env file');
   process.exit(1);
@@ -79,8 +82,10 @@ app.get('/seal-subscriptions', async (req, res) => {
     }
 
     const data = await apiRes.json();
+    // 2026-04-25: Keep legacy subscription lookup active-only for vacation dropdown compatibility.
+    const activeSubscriptions = (data.payload?.subscriptions || []).filter(isActiveSubscription);
     // keep response shape same as your old code
-    res.json({ success: true, payload: { subscriptions: data.payload?.subscriptions || [] } });
+    res.json({ success: true, payload: { subscriptions: activeSubscriptions } });
   } catch (err) {
     console.error('Error in /seal-subscriptions:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -146,6 +151,102 @@ app.put('/reschedule-billing-attempt', async (req, res) => {
   }
 });
 
+// -------------------- Admin Seal Report (ACTIVE ONLY) --------------------
+app.get('/admin/seal-report', async (req, res) => {
+  const adminKey = req.query.key;
+
+  if (adminKey !== process.env.ADMIN_REPORT_KEY) {
+    return res.status(403).send("Unauthorized");
+  }
+
+  try {
+    let page = 1;
+    let hasMore = true;
+    let allSubscriptions = [];
+
+    while (hasMore) {
+      const apiRes = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}`,
+        {
+          headers: {
+            'X-Seal-Token': SEAL_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!apiRes.ok) {
+        const errText = await apiRes.text();
+        throw new Error(errText);
+      }
+
+      const data = await apiRes.json();
+      const subs = data.payload?.subscriptions || [];
+
+      // ✅ FILTER ACTIVE ONLY HERE
+      const activeSubs = subs.filter(isActiveSubscription);
+
+      allSubscriptions.push(...activeSubs);
+
+      hasMore = subs.length > 0;
+      page++;
+    }
+
+    let csv = `Subscription ID,Product,Parent First Name,Parent Last Name,Parent Mobile,Parent Email,City,State,Zip,Child First Name,Child Last Name,Child DOB,CricClubID, Program Level,Billing Interval,Next Billing Date\n`;
+
+    for (const sub of allSubscriptions) {
+
+      const detailRes = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
+        {
+          headers: {
+            'X-Seal-Token': SEAL_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!detailRes.ok) continue;
+
+      const detailData = await detailRes.json();
+      const detail = detailData.payload || {};
+      const item = detail.items?.[0];
+      if (!item) continue;
+
+      const props = item.properties || [];
+      const getProp = (key) => {
+  const searchKey = key.trim().toLowerCase();
+  for (const p of props) {
+    // Remove trailing colons (:: or :)
+    const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
+    if (normalized === searchKey) return p.value || '';
+  }
+  return '';
+};
+
+      const billingAttempts = detail.billing_attempts || [];
+      const now = new Date();
+      const nextAttempt = billingAttempts.find(a => new Date(a.date) >= now);
+
+      csv += `"${sub.id}","${item.title}",` +
+             `"${getProp('Parent First Name')}","${getProp('Parent Last Name')}","${getProp('Parent Mobile')}","${getProp('Parent Email')}",` +
+             `"${getProp('Parent City')}","${getProp('Parent State')}","${getProp('Parent Zip')}",` +
+             `"${getProp('Child First Name')}","${getProp('Child Last Name')}","${getProp('Child DOB')}",` +
+			 `"${getProp('Child CricClub ID')}",`+
+             `"${getProp('Program Level')}","${getProp('Billing Interval')}",` +
+             `"${nextAttempt?.date || ''}"\n`;
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=active_seal_subscription_report.csv');
+    res.send(csv);
+
+  } catch (err) {
+    console.error('Seal report error:', err);
+    res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
 // -------------------- Enrollments (combined endpoint) --------------------
 app.get('/enrollments', async (req, res) => {
   const email = req.query.email;
@@ -162,7 +263,8 @@ app.get('/enrollments', async (req, res) => {
     }
 
     const subsData = await subsResponse.json();
-    const subs = subsData.payload?.subscriptions || [];
+    // 2026-04-25: Only return active Seal subscriptions so vacation dropdowns do not show inactive enrollments.
+    const subs = (subsData.payload?.subscriptions || []).filter(isActiveSubscription);
     const now = new Date();
     const enrollments = [];
 
@@ -180,11 +282,21 @@ app.get('/enrollments', async (req, res) => {
 
         const detailData = await detailResponse.json();
         const detail = detailData.payload || {};
+        if (!isActiveSubscription({ status: detail.status || sub.status })) continue;
         if (!detail.items || detail.items.length === 0) continue;
 
         const item = detail.items[0];
         const props = item.properties || [];
-        const getProp = (key) => props.find(p => p.key === key)?.value || "";
+        const getProp = (key) => {
+          const searchKey = key.trim().toLowerCase();
+
+          for (const p of props) {
+            const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
+            if (normalized === searchKey) return p.value || "";
+          }
+
+          return "";
+        };
 
         const billingAttempts = detail.billing_attempts || [];
         const nextAttempt = billingAttempts.find(a => new Date(a.date) >= now) || null;
@@ -201,12 +313,14 @@ app.get('/enrollments', async (req, res) => {
 
         enrollments.push({
           subscription_id: sub.id,
+          status: detail.status || sub.status || "",
           child_first_name: getProp('Child First Name'),
           child_last_name: getProp('Child Last Name'),
           cricclub_id: getProp('Child CricClub ID'),
           program: getProp('Program Level') || item.title || "",
           payment_frequency: getProp('Billing Interval') || sub.billing_interval || "",
           next_payment_date: nextAttempt?.date || "",
+          next_billing_attempt_id: nextAttempt?.id || null,
           next_payment_amount: item.price ? `$${item.price}` : "",
           parent_email: email,
           previous_payments: previousPayments
@@ -216,6 +330,13 @@ app.get('/enrollments', async (req, res) => {
         continue;
       }
     }
+
+    // 2026-04-25: Sort active enrollments by child name for consistent dropdown ordering.
+    enrollments.sort((a, b) => {
+      const nameA = `${a.child_first_name || ''} ${a.child_last_name || ''}`.trim();
+      const nameB = `${b.child_first_name || ''} ${b.child_last_name || ''}`.trim();
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+    });
 
     return res.json({ success: true, enrollments });
   } catch (err) {
@@ -477,15 +598,183 @@ async function adjustBilling(subscriptionId, shiftDays) {
   }
 }
 
-
-// -------------------- Debug vacations (all rows) --------------------
-app.get('/debug-vacations', async (req, res) => {
+// -------------------- Seal Upcoming Payments CSV (ROBUST FULL VERSION) --------------------
+app.get('/seal-upcoming-payments', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM vacation_requests ORDER BY id DESC');
-    return res.json({ success: true, vacations: rows });
+
+    const month = req.query.month; // YYYY-MM
+    if (!month) {
+      return res.status(400).send("Month required. Format: YYYY-MM");
+    }
+
+    const startDate = new Date(`${month}-01`);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + 1);
+
+    // =========================
+    // STEP 1: GET ALL SUBSCRIPTIONS
+    // =========================
+    let page = 1;
+    let hasMore = true;
+    let subs = [];
+
+    while (hasMore) {
+      const resSubs = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}`,
+        {
+          headers: {
+            'X-Seal-Token': SEAL_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!resSubs.ok) {
+        const errText = await resSubs.text();
+        console.error("Seal list error:", errText);
+        throw new Error("Failed to fetch subscriptions");
+      }
+
+      const data = await resSubs.json();
+      const batch = data.payload?.subscriptions || [];
+
+      // ACTIVE ONLY (ALL CAPS)
+      const activeBatch = batch.filter(s =>
+        (s.status || '').toUpperCase() === 'ACTIVE'
+      );
+
+      subs.push(...activeBatch);
+
+      console.log(`Page ${page} → Total: ${batch.length}, Active: ${activeBatch.length}`);
+
+      if (batch.length === 0 || batch.length < 50) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    console.log("TOTAL ACTIVE SUBSCRIPTIONS:", subs.length);
+
+    // =========================
+    // CSV HEADER
+    // =========================
+    let csv =
+`Subscription ID,Next Payment Date,Amount,Parent First Name,Parent Last Name,Parent Email,Parent Mobile,Child First Name,Child Last Name,Child DOB,Program Level,Billing Interval\n`;
+
+    const now = new Date();
+
+    // =========================
+    // STEP 2: DETAILS LOOP
+    // =========================
+    for (const sub of subs) {
+
+      try {
+
+        const detailRes = await fetch(
+          `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
+          {
+            headers: {
+              'X-Seal-Token': SEAL_TOKEN,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (!detailRes.ok) continue;
+
+        const detailData = await detailRes.json();
+        const detail = detailData.payload || {};
+
+        const item = detail.items?.[0];
+        if (!item) continue;
+
+        const props = item.properties || [];
+
+        // =========================
+        // PROPERTY PARSER (:: SAFE)
+        // =========================
+        const getProp = (key) => {
+          const searchKey = key.trim().toLowerCase();
+
+          for (const p of props) {
+            const normalized = (p.key || '')
+              .replace(/:+$/, '')
+              .trim()
+              .toLowerCase();
+
+            if (normalized === searchKey) {
+              return p.value || '';
+            }
+          }
+          return '';
+        };
+
+        // =========================
+        // NEXT PAYMENT LOGIC
+        // =========================
+        const billingAttempts = detail.billing_attempts || [];
+
+        const nextAttempt = billingAttempts
+          .filter(a => a.date)
+          .map(a => ({
+            ...a,
+            parsedDate: new Date(a.date)
+          }))
+          .filter(a => a.parsedDate >= now)
+          .sort((a, b) => a.parsedDate - b.parsedDate)[0];
+
+        if (!nextAttempt) continue;
+
+        const nextDateObj = new Date(nextAttempt.date);
+
+        // =========================
+        // MONTH FILTER
+        // =========================
+        if (nextDateObj < startDate || nextDateObj >= endDate) {
+          continue;
+        }
+
+        const amount = item.price ? `$${item.price}` : '';
+
+        // =========================
+        // DATE CLEANING (REMOVE TIME)
+        // =========================
+        const cleanDate = (iso) => {
+          if (!iso) return '';
+          return iso.split("T")[0];
+        };
+
+        const nextPaymentDate = cleanDate(nextAttempt.date);
+
+        // =========================
+        // CSV ROW
+        // =========================
+        csv += `"${sub.id}","${nextPaymentDate}","${amount}",` +
+          `"${getProp('Parent First Name')}","${getProp('Parent Last Name')}","${getProp('Parent Email')}","${getProp('Parent Mobile')}",` +
+          `"${getProp('Child First Name')}","${getProp('Child Last Name')}","${getProp('Child DOB')}",` +
+          `"${getProp('Program Level')}","${getProp('Billing Interval')}"\n`;
+
+      } catch (err) {
+        console.error("Subscription error:", sub.id, err);
+        continue;
+      }
+    }
+
+    // =========================
+    // OUTPUT CSV
+    // =========================
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=seal_upcoming_${month}.csv`
+    );
+
+    res.send(csv);
+
   } catch (err) {
-    console.error('Error in /debug-vacations:', err);
-    return res.status(500).json({ success: false, error: err.message });
+    console.error("Upcoming payment error:", err);
+    res.status(500).send("Failed to generate report");
   }
 });
 
