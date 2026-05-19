@@ -247,6 +247,119 @@ app.get('/admin/seal-report', async (req, res) => {
   }
 });
 
+// -------------------- Admin Outdoor Warminster Participants Report --------------------
+app.get('/admin/outdoor-warminster-participants', async (req, res) => {
+  const adminKey = req.query.key;
+  const itemNames = [
+    'Outdoor Coaching - Warminster',
+    'Outdoor Coaching Phoenixville'
+  ];
+  const normalizeItemName = (value = '') =>
+    value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  const itemNameTokens = itemNames.map(normalizeItemName);
+
+  if (adminKey !== process.env.ADMIN_REPORT_KEY) {
+    return res.status(403).send("Unauthorized");
+  }
+
+  const escapeCsv = (value = '') =>
+    `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+  const getProp = (properties, key) => {
+    const searchKey = key.trim().toLowerCase();
+
+    for (const p of properties || []) {
+      const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
+      if (normalized === searchKey) return p.value || '';
+    }
+
+    return '';
+  };
+
+  const subscriptionHasItem = (subscription) =>
+    (subscription.items || []).some(item =>
+      itemNameTokens.includes(normalizeItemName(item.title))
+    );
+
+  try {
+    let page = 1;
+    let hasMore = true;
+    const subscriptions = [];
+
+    while (hasMore) {
+      const apiRes = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}`,
+        {
+          headers: {
+            'X-Seal-Token': SEAL_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!apiRes.ok) {
+        const errText = await apiRes.text();
+        throw new Error(errText);
+      }
+
+      const data = await apiRes.json();
+      const subs = data.payload?.subscriptions || [];
+
+      subscriptions.push(...subs);
+
+      hasMore = subs.length > 0;
+      page++;
+    }
+
+    const rows = [['Item Name', 'Participant Name']];
+
+    for (const sub of subscriptions) {
+      if (Array.isArray(sub.items) && sub.items.length > 0 && !subscriptionHasItem(sub)) {
+        continue;
+      }
+
+      const detailRes = await fetch(
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${encodeURIComponent(sub.id)}`,
+        {
+          headers: {
+            'X-Seal-Token': SEAL_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!detailRes.ok) continue;
+
+      const detailData = await detailRes.json();
+      const detail = detailData.payload || {};
+      const item = (detail.items || []).find(i =>
+        itemNameTokens.includes(normalizeItemName(i.title))
+      );
+      if (!item) continue;
+
+      rows.push([
+        item.title || '',
+        getProp(item.properties, 'Participant Name')
+      ]);
+    }
+
+    const [header, ...participantRows] = rows;
+    participantRows.sort((a, b) =>
+      (a[0] || '').localeCompare(b[0] || '', undefined, { sensitivity: 'base' }) ||
+      (a[1] || '').localeCompare(b[1] || '', undefined, { sensitivity: 'base' })
+    );
+
+    const csv = [header, ...participantRows].map(row => row.map(escapeCsv).join(',')).join('\n') + '\n';
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=outdoor_coaching_participants.csv');
+    res.send(csv);
+  } catch (err) {
+    console.error('Outdoor Warminster participants report error:', err);
+    res.status(500).json({ error: 'Failed to generate Outdoor Warminster participants report' });
+  }
+});
+
 // -------------------- Enrollments (combined endpoint) --------------------
 app.get('/enrollments', async (req, res) => {
   const email = req.query.email;
@@ -314,6 +427,8 @@ app.get('/enrollments', async (req, res) => {
         enrollments.push({
           subscription_id: sub.id,
           status: detail.status || sub.status || "",
+          product_title: item.title || "",
+          participant_name: getProp('Participant Name') || `${getProp('Child First Name')} ${getProp('Child Last Name')}`.trim(),
           child_first_name: getProp('Child First Name'),
           child_last_name: getProp('Child Last Name'),
           cricclub_id: getProp('Child CricClub ID'),
