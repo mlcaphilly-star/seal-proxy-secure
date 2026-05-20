@@ -14,6 +14,18 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
 const isActiveSubscription = (subscription = {}) =>
   (subscription.status || '').toUpperCase() === 'ACTIVE';
 
+const getDateStringInTimeZone = (date, timeZone = 'America/New_York') => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
 if (!SEAL_TOKEN || !ALLOWED_ORIGIN) {
   console.error('ERROR: SEAL_TOKEN and ALLOWED_ORIGIN must be set in .env file');
   process.exit(1);
@@ -533,7 +545,29 @@ app.post('/vacation-request', async (req, res) => {
   } = req.body;
 
   if (!customer_id || !child_name || !from_date || !to_date || !shift_days || !subscription_id || (billing_attempt_id === undefined)) {
-    return res.status(400).json({ success: false, error: 'Missing required fields' });
+    return res.status(400).json({ success: false, error: 'Please complete all required fields and try again.' });
+  }
+
+  const today = getDateStringInTimeZone(new Date());
+  if (from_date <= today) {
+    return res.status(400).json({
+      success: false,
+      error: 'Vacation start date must be a future date.'
+    });
+  }
+
+  if (to_date <= from_date) {
+    return res.status(400).json({
+      success: false,
+      error: 'Vacation end date must be after the start date.'
+    });
+  }
+
+  if (Number(shift_days) < 21) {
+    return res.status(400).json({
+      success: false,
+      error: 'Vacation requests must be at least 21 consecutive days.'
+    });
   }
 
   try {
@@ -545,7 +579,7 @@ app.post('/vacation-request', async (req, res) => {
     if (!sealRes.ok) {
       const errText = await sealRes.text();
       console.error('Seal API fetch subscription failed:', errText);
-      return res.status(502).json({ success: false, error: 'Failed to fetch subscription details from Seal' });
+      return res.status(502).json({ success: false, error: 'We could not verify this subscription right now. Please try again in a few minutes.' });
     }
 
     const subscriptionData = await sealRes.json();
@@ -564,9 +598,15 @@ app.post('/vacation-request', async (req, res) => {
     }
 
     if (firstBillingAttemptDate && new Date(from_date) > firstBillingAttemptDate) {
+      const billingDateLabel = firstBillingAttemptDate.toLocaleDateString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric'
+      });
+
       return res.status(400).json({
         success: false,
-        error: `You cannot submit this request now. Please submit it on or before ${firstBillingAttemptDate.toISOString().slice(0,10)}`
+        error: `A payment is scheduled for ${billingDateLabel} before your vacation starts. Please allow that payment to complete, then submit your vacation request.`
       });
     }
 
@@ -588,9 +628,20 @@ app.post('/vacation-request', async (req, res) => {
     const overlapRes = await pool.query(overlapSql, overlapParams);
     if (overlapRes.rows.length > 0) {
       const r = overlapRes.rows[0];
+      const existingFromLabel = new Date(r.from_date).toLocaleDateString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric'
+      });
+      const existingToLabel = new Date(r.to_date).toLocaleDateString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric'
+      });
+
       return res.status(409).json({
         success: false,
-        error: `You have already submitted a vacation request from ${r.from_date.toISOString().slice(0,10)} to ${r.to_date.toISOString().slice(0,10)}. Overlapping requests are not allowed.`
+        error: `There is already a vacation request from ${existingFromLabel} to ${existingToLabel}. Please choose dates that do not overlap with an existing request.`
       });
     }
 
@@ -622,7 +673,7 @@ app.post('/vacation-request', async (req, res) => {
 
   } catch (err) {
     console.error('Error submitting vacation request:', err);
-    return res.status(500).json({ success: false, error: 'Internal server error' });
+    return res.status(500).json({ success: false, error: 'We could not submit your vacation request right now. Please try again in a few minutes.' });
   }
 });
 
