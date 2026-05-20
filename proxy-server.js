@@ -14,6 +14,16 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
 const isActiveSubscription = (subscription = {}) =>
   (subscription.status || '').toUpperCase() === 'ACTIVE';
 
+const requireAdminKey = (req, res) => {
+  const adminKey = req.query.key || req.body?.key;
+  if (!process.env.ADMIN_REPORT_KEY || adminKey !== process.env.ADMIN_REPORT_KEY) {
+    res.status(403).json({ success: false, error: 'Unauthorized' });
+    return false;
+  }
+
+  return true;
+};
+
 const getDateStringInTimeZone = (date, timeZone = 'America/New_York') => {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -24,6 +34,26 @@ const getDateStringInTimeZone = (date, timeZone = 'America/New_York') => {
 
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+};
+
+const normalizeProductName = (value = '') =>
+  String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+
+const findSubscriptionItemByProduct = (subscription, normalizedProductName) =>
+  (subscription.items || []).find(item =>
+    normalizeProductName(item.title || '') === normalizedProductName
+  ) || null;
+
+const addDaysToDateString = (dateValue, days) => {
+  const date = new Date(dateValue);
+  date.setDate(date.getDate() + Number(days));
+  return getDateStringInTimeZone(date, 'UTC');
+};
+
+const daysBetweenInclusive = (fromDate, toDate) => {
+  const from = new Date(`${fromDate}T00:00:00Z`);
+  const to = new Date(`${toDate}T00:00:00Z`);
+  return Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
 };
 
 if (!SEAL_TOKEN || !ALLOWED_ORIGIN) {
@@ -72,6 +102,25 @@ CREATE TABLE IF NOT EXISTS vacation_requests (
 pool.query(createTableSQL)
   .then(() => console.log('vacation_requests table ready'))
   .catch(err => console.error('Error creating vacation_requests table:', err));
+
+const createBulkCreditTableSQL = `
+CREATE TABLE IF NOT EXISTS bulk_credit_requests (
+  id SERIAL PRIMARY KEY,
+  product_title TEXT NOT NULL,
+  from_date DATE,
+  to_date DATE,
+  credit_days INT NOT NULL,
+  dry_run BOOLEAN NOT NULL DEFAULT true,
+  matched_count INT NOT NULL DEFAULT 0,
+  updated_count INT NOT NULL DEFAULT 0,
+  failed_count INT NOT NULL DEFAULT 0,
+  results JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createBulkCreditTableSQL)
+  .then(() => console.log('bulk_credit_requests table ready'))
+  .catch(err => console.error('Error creating bulk_credit_requests table:', err));
 
 // Root
 app.get('/', (req, res) => {
@@ -162,6 +211,98 @@ app.put('/reschedule-billing-attempt', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+async function fetchActiveSealSubscriptions() {
+  let page = 1;
+  let hasMore = true;
+  const subscriptions = [];
+
+  while (hasMore) {
+    const apiRes = await fetch(
+      `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}`,
+      {
+        headers: {
+          'X-Seal-Token': SEAL_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      throw new Error(`Seal subscriptions fetch failed: ${errText}`);
+    }
+
+    const data = await apiRes.json();
+    const batch = data.payload?.subscriptions || [];
+    subscriptions.push(...batch.filter(isActiveSubscription));
+
+    hasMore = batch.length >= 50;
+    page++;
+  }
+
+  return subscriptions;
+}
+
+async function fetchSealSubscriptionDetail(subscriptionId) {
+  const detailRes = await fetch(
+    `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${encodeURIComponent(subscriptionId)}`,
+    {
+      headers: {
+        'X-Seal-Token': SEAL_TOKEN,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (!detailRes.ok) {
+    const errText = await detailRes.text();
+    throw new Error(`Seal subscription detail fetch failed for ${subscriptionId}: ${errText}`);
+  }
+
+  const detailData = await detailRes.json();
+  return detailData.payload || {};
+}
+
+function getNextUnpaidBillingAttempt(billingAttempts = []) {
+  const now = new Date();
+
+  return billingAttempts
+    .filter(attempt => {
+      const status = (attempt.status || '').toLowerCase();
+      return attempt.date && status !== 'completed' && new Date(attempt.date) >= now;
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date))[0] || null;
+}
+
+async function rescheduleSealBillingAttempt({ billingAttemptId, subscriptionId, date }) {
+  const sealRes = await fetch('https://app.sealsubscriptions.com/shopify/merchant/api/subscription-billing-attempt', {
+    method: 'PUT',
+    headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: billingAttemptId,
+      subscription_id: subscriptionId,
+      date,
+      time: "14:30",
+      timezone: "-04:00",
+      action: "reschedule",
+      reset_schedule: "true"
+    })
+  });
+
+  let result = {};
+  try {
+    result = await sealRes.json();
+  } catch (err) {
+    result = {};
+  }
+
+  if (!sealRes.ok) {
+    throw new Error(result.error || `Seal reschedule failed with status ${sealRes.status}`);
+  }
+
+  return result;
+}
 
 // -------------------- Admin Seal Report (ACTIVE ONLY) --------------------
 app.get('/admin/seal-report', async (req, res) => {
@@ -369,6 +510,208 @@ app.get('/admin/outdoor-warminster-participants', async (req, res) => {
   } catch (err) {
     console.error('Outdoor Warminster participants report error:', err);
     res.status(500).json({ error: 'Failed to generate Outdoor Warminster participants report' });
+  }
+});
+
+// -------------------- Admin Product List for Bulk Credits --------------------
+app.get('/admin/subscription-products', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const subscriptions = await fetchActiveSealSubscriptions();
+    const productMap = new Map();
+
+    for (const sub of subscriptions) {
+      try {
+        const listItems = sub.items || [];
+        const items = listItems.length
+          ? listItems
+          : (await fetchSealSubscriptionDetail(sub.id)).items || [];
+
+        for (const item of items) {
+          const productTitle = (item.title || '').trim();
+          if (!productTitle) continue;
+
+          const normalized = normalizeProductName(productTitle);
+          const current = productMap.get(normalized) || {
+            product_title: productTitle,
+            active_subscription_count: 0
+          };
+
+          current.active_subscription_count += 1;
+          productMap.set(normalized, current);
+        }
+      } catch (err) {
+        console.error('Error reading subscription product for', sub.id, err);
+      }
+    }
+
+    const products = Array.from(productMap.values()).sort((a, b) =>
+      a.product_title.localeCompare(b.product_title, undefined, { sensitivity: 'base' })
+    );
+
+    return res.json({ success: true, products });
+  } catch (err) {
+    console.error('Admin subscription products error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load subscription products.' });
+  }
+});
+
+// -------------------- Admin Bulk Holiday/Coaching Credit --------------------
+app.post('/admin/bulk-credit', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const productTitle = (req.body.product_title || '').trim();
+  const fromDate = req.body.from_date || null;
+  const toDate = req.body.to_date || null;
+  const dryRun = req.body.dry_run !== false;
+  let creditDays = Number(req.body.credit_days || 0);
+
+  if (!productTitle) {
+    return res.status(400).json({ success: false, error: 'Product is required.' });
+  }
+
+  if ((!creditDays || Number.isNaN(creditDays)) && fromDate && toDate) {
+    creditDays = daysBetweenInclusive(fromDate, toDate);
+  }
+
+  if (!Number.isInteger(creditDays) || creditDays < 1 || creditDays > 365) {
+    return res.status(400).json({
+      success: false,
+      error: 'Credit days must be a whole number between 1 and 365.'
+    });
+  }
+
+  if ((fromDate && !toDate) || (!fromDate && toDate)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Please provide both from date and to date, or provide only number of days.'
+    });
+  }
+
+  if (fromDate && toDate && toDate < fromDate) {
+    return res.status(400).json({
+      success: false,
+      error: 'To date must be after or equal to from date.'
+    });
+  }
+
+  const requestedProduct = normalizeProductName(productTitle);
+  const results = [];
+  let matchedCount = 0;
+  let updatedCount = 0;
+  let failedCount = 0;
+
+  try {
+    const subscriptions = await fetchActiveSealSubscriptions();
+
+    for (const sub of subscriptions) {
+      try {
+        const listMatchedItem = findSubscriptionItemByProduct(sub, requestedProduct);
+        if (Array.isArray(sub.items) && sub.items.length > 0 && !listMatchedItem) {
+          continue;
+        }
+
+        const detail = await fetchSealSubscriptionDetail(sub.id);
+        if (!isActiveSubscription({ status: detail.status || sub.status })) continue;
+
+        const matchedItem = (detail.items || []).find(item =>
+          normalizeProductName(item.title || '') === requestedProduct
+        ) || listMatchedItem;
+        if (!matchedItem) continue;
+
+        matchedCount += 1;
+
+        const nextAttempt = getNextUnpaidBillingAttempt(detail.billing_attempts || []);
+        if (!nextAttempt) {
+          failedCount += 1;
+          results.push({
+            subscription_id: sub.id,
+            product_title: matchedItem.title || '',
+            status: 'skipped',
+            error: 'No upcoming unpaid billing attempt found.'
+          });
+          continue;
+        }
+
+        if (!nextAttempt.id) {
+          failedCount += 1;
+          results.push({
+            subscription_id: sub.id,
+            product_title: matchedItem.title || '',
+            status: 'skipped',
+            error: 'Upcoming billing attempt is missing an ID.'
+          });
+          continue;
+        }
+
+        const newPaymentDate = addDaysToDateString(nextAttempt.date, creditDays);
+        const result = {
+          subscription_id: sub.id,
+          product_title: matchedItem.title || '',
+          email: detail.email || '',
+          billing_attempt_id: nextAttempt.id || null,
+          original_payment_date: nextAttempt.date,
+          new_payment_date: newPaymentDate,
+          credit_days: creditDays,
+          status: dryRun ? 'preview' : 'updated'
+        };
+
+        if (!dryRun) {
+          await rescheduleSealBillingAttempt({
+            billingAttemptId: nextAttempt.id,
+            subscriptionId: sub.id,
+            date: newPaymentDate
+          });
+          updatedCount += 1;
+        }
+
+        results.push(result);
+      } catch (err) {
+        failedCount += 1;
+        results.push({
+          subscription_id: sub.id,
+          status: 'failed',
+          error: err.message || 'Failed to process subscription.'
+        });
+      }
+    }
+
+    const insertSql = `
+      INSERT INTO bulk_credit_requests
+      (product_title, from_date, to_date, credit_days, dry_run, matched_count, updated_count, failed_count, results)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+      RETURNING id
+    `;
+    const insertParams = [
+      productTitle,
+      fromDate,
+      toDate,
+      creditDays,
+      dryRun,
+      matchedCount,
+      updatedCount,
+      failedCount,
+      JSON.stringify(results)
+    ];
+    const insertResult = await pool.query(insertSql, insertParams);
+
+    return res.json({
+      success: true,
+      dry_run: dryRun,
+      bulk_credit_id: insertResult.rows[0].id,
+      product_title: productTitle,
+      from_date: fromDate,
+      to_date: toDate,
+      credit_days: creditDays,
+      matched_count: matchedCount,
+      updated_count: updatedCount,
+      failed_count: failedCount,
+      results
+    });
+  } catch (err) {
+    console.error('Admin bulk credit error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to process bulk credit.' });
   }
 });
 
@@ -766,6 +1109,8 @@ async function adjustBilling(subscriptionId, shiftDays) {
 
 // -------------------- Seal Upcoming Payments CSV (ROBUST FULL VERSION) --------------------
 app.get('/seal-upcoming-payments', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
   try {
 
     const month = req.query.month; // YYYY-MM
