@@ -513,6 +513,42 @@ app.get('/admin/outdoor-warminster-participants', async (req, res) => {
   }
 });
 
+// -------------------- Admin Current Vacations --------------------
+app.get('/admin/current-vacations', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const today = getDateStringInTimeZone(new Date());
+    const sql = `
+      SELECT
+        id,
+        customer_id,
+        child_name,
+        from_date::text,
+        to_date::text,
+        shift_days,
+        reason,
+        subscription_id,
+        billing_attempt_id
+      FROM vacation_requests
+      WHERE from_date <= $1::date
+        AND to_date >= $1::date
+      ORDER BY to_date ASC, child_name ASC
+    `;
+    const { rows } = await pool.query(sql, [today]);
+
+    return res.json({
+      success: true,
+      report_date: today,
+      count: rows.length,
+      vacations: rows
+    });
+  } catch (err) {
+    console.error('Admin current vacations error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load current vacations.' });
+  }
+});
+
 // -------------------- Admin Product List for Bulk Credits --------------------
 app.get('/admin/subscription-products', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
