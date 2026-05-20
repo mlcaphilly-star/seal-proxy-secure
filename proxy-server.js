@@ -1170,8 +1170,11 @@ app.get('/seal-upcoming-payments', async (req, res) => {
     // =========================
     // CSV HEADER
     // =========================
+    const escapeCsv = (value = '') =>
+      `"${String(value ?? '').replace(/"/g, '""')}"`;
+
     let csv =
-`Subscription ID,Next Payment Date,Amount,Parent First Name,Parent Last Name,Parent Email,Parent Mobile,Child First Name,Child Last Name,Child DOB,Program Level,Billing Interval\n`;
+`Subscription ID,Product,Next Payment Date,Amount,Parent First Name,Parent Last Name,Parent Email,Parent Mobile,Participant Name,Age,Emergency Contact,Medical Notes,Child DOB,Program Level,Billing Interval\n`;
 
     const now = new Date();
 
@@ -1257,14 +1260,36 @@ app.get('/seal-upcoming-payments', async (req, res) => {
         };
 
         const nextPaymentDate = cleanDate(nextAttempt.date);
+        const childFirstName = getProp('Child First Name');
+        const childLastName = getProp('Child Last Name');
+        const childFullName = `${childFirstName || ''} ${childLastName || ''}`.replace(/\s+/g, ' ').trim();
+
+        // 2026-05-20: Upcoming payments supports both child-based coaching subscriptions and participant-based outdoor/women's products.
+        const participantName = getProp('Participant Name') || childFullName;
+        const age = getProp('Age');
+        const emergencyContact = getProp('Emergency Contact');
+        const medicalNotes = getProp('Medical Notes');
 
         // =========================
         // CSV ROW
         // =========================
-        csv += `"${sub.id}","${nextPaymentDate}","${amount}",` +
-          `"${getProp('Parent First Name')}","${getProp('Parent Last Name')}","${getProp('Parent Email')}","${getProp('Parent Mobile')}",` +
-          `"${getProp('Child First Name')}","${getProp('Child Last Name')}","${getProp('Child DOB')}",` +
-          `"${getProp('Program Level')}","${getProp('Billing Interval')}"\n`;
+        csv += [
+          sub.id,
+          item.title || '',
+          nextPaymentDate,
+          amount,
+          getProp('Parent First Name'),
+          getProp('Parent Last Name'),
+          getProp('Parent Email'),
+          getProp('Parent Mobile'),
+          participantName,
+          age,
+          emergencyContact,
+          medicalNotes,
+          getProp('Child DOB'),
+          getProp('Program Level') || item.title || '',
+          getProp('Billing Interval') || sub.billing_interval || ''
+        ].map(escapeCsv).join(',') + '\n';
 
       } catch (err) {
         console.error("Subscription error:", sub.id, err);
