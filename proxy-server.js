@@ -1177,6 +1177,7 @@ app.get('/seal-upcoming-payments', async (req, res) => {
 `Subscription ID,Product,Next Payment Date,Amount,Parent First Name,Parent Last Name,Parent Email,Parent Mobile,Participant Name,Age,Emergency Contact,Medical Notes,Child DOB,Program Level,Billing Interval\n`;
 
     const now = new Date();
+    const reportRows = [];
 
     // =========================
     // STEP 2: DETAILS LOOP
@@ -1273,7 +1274,10 @@ app.get('/seal-upcoming-payments', async (req, res) => {
         // =========================
         // CSV ROW
         // =========================
-        csv += [
+        reportRows.push({
+          nextPaymentDate,
+          nextPaymentTime: nextDateObj.getTime(),
+          values: [
           sub.id,
           item.title || '',
           nextPaymentDate,
@@ -1289,13 +1293,21 @@ app.get('/seal-upcoming-payments', async (req, res) => {
           getProp('Child DOB'),
           getProp('Program Level') || item.title || '',
           getProp('Billing Interval') || sub.billing_interval || ''
-        ].map(escapeCsv).join(',') + '\n';
+          ]
+        });
 
       } catch (err) {
         console.error("Subscription error:", sub.id, err);
         continue;
       }
     }
+
+    // 2026-05-20: Sort upcoming payment report by Next Payment Date.
+    reportRows
+      .sort((a, b) => a.nextPaymentTime - b.nextPaymentTime)
+      .forEach(row => {
+        csv += row.values.map(escapeCsv).join(',') + '\n';
+      });
 
     // =========================
     // OUTPUT CSV
