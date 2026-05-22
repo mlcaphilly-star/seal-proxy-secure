@@ -1,0 +1,216 @@
+{% assign is_coach = false %}
+{% if customer and customer.tags contains 'COACH' %}
+  {% assign is_coach = true %}
+{% endif %}
+{% if customer and customer.tags contains 'SUPERUSER' %}
+  {% assign is_coach = true %}
+{% endif %}
+
+{% if is_coach %}
+<section class="search-modify-batch" style="max-width:1200px;margin:0 auto;padding:2rem;">
+  <h1 style="margin:0 0 1rem;">Search &amp; Modify Batch</h1>
+
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+    <label for="coachKey" style="display:block;font-weight:600;margin-bottom:0.35rem;">Coach Key</label>
+    <input id="coachKey" type="password" autocomplete="off" style="width:100%;max-width:420px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="saveCoachKey" type="button" style="margin-left:0.5rem;padding:0.55rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Use Key</button>
+    <span id="coachKeyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
+  </div>
+
+  <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <input id="participantSearch" type="search" placeholder="Search by participant name or CricClub ID" style="flex:1;min-width:260px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="searchParticipants" type="button" style="padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#111;color:#fff;">Search</button>
+  </div>
+
+  <div id="coachStatus" style="font-weight:600;margin-bottom:1rem;"></div>
+  <div id="searchResults" style="overflow-x:auto;"></div>
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const proxyBase = "https://seal-proxy-secure.onrender.com";
+  const coachKey = document.getElementById("coachKey");
+  const saveCoachKey = document.getElementById("saveCoachKey");
+  const coachKeyStatus = document.getElementById("coachKeyStatus");
+  const coachStatus = document.getElementById("coachStatus");
+  const participantSearch = document.getElementById("participantSearch");
+  const searchResults = document.getElementById("searchResults");
+  let batches = [];
+  let participants = [];
+
+  const savedKey = sessionStorage.getItem("sealCoachKey") || sessionStorage.getItem("sealAdminKey") || "";
+  if (savedKey) {
+    coachKey.value = savedKey;
+    coachKeyStatus.textContent = "Key loaded for this browser session.";
+  }
+
+  function getKey() {
+    return coachKey.value.trim();
+  }
+
+  function requireKey() {
+    if (!getKey()) {
+      coachStatus.textContent = "Enter the coach key first.";
+      return false;
+    }
+    return true;
+  }
+
+  function buildUrl(path, params = {}) {
+    const url = new URL(proxyBase + path);
+    url.searchParams.set("key", getKey());
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function batchLabel(batch) {
+    return `${batch.batch_name} - ${batch.day} ${batch.time}`;
+  }
+
+  function batchOptions(selectedId) {
+    return ['<option value="">Select batch</option>'].concat(
+      batches.map(batch => {
+        const selected = String(batch.batch_id) === String(selectedId || "") ? " selected" : "";
+        return `<option value="${batch.batch_id}"${selected}>${escapeHtml(batchLabel(batch))}</option>`;
+      })
+    ).join("");
+  }
+
+  async function loadBatches() {
+    if (batches.length) return;
+    const response = await fetch(buildUrl("/coach/batches"));
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || "Could not load batches.");
+    batches = data.batches || [];
+  }
+
+  function selectedBatchIds(index) {
+    return [
+      document.getElementById(`modifyBatch1-${index}`).value,
+      document.getElementById(`modifyBatch2-${index}`).value
+    ].filter(Boolean);
+  }
+
+  function renderSearchResults() {
+    if (!participants.length) {
+      searchResults.innerHTML = "<p>No matching active participants found.</p>";
+      return;
+    }
+
+    searchResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">CricClub ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Current Batch</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">New From</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Day 1</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Day 2</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${participants.map((participant, index) => {
+            const current = (participant.current_assignments || []).map(batch => escapeHtml(batchLabel(batch))).join("<br>");
+            const firstBatch = participant.current_assignments?.[0]?.batch_id || "";
+            const secondBatch = participant.current_assignments?.[1]?.batch_id || "";
+            return `
+              <tr>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.participant_name)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.cricclub_id)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${current || "None"}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;"><input id="modifyFromDate-${index}" type="date" value="${new Date().toISOString().slice(0, 10)}" style="padding:0.45rem;border:1px solid #bbb;border-radius:4px;"></td>
+                <td style="border:1px solid #ddd;padding:0.5rem;"><select id="modifyBatch1-${index}" style="width:100%;padding:0.45rem;border:1px solid #bbb;border-radius:4px;">${batchOptions(firstBatch)}</select></td>
+                <td style="border:1px solid #ddd;padding:0.5rem;"><select id="modifyBatch2-${index}" style="width:100%;padding:0.45rem;border:1px solid #bbb;border-radius:4px;">${batchOptions(secondBatch)}</select></td>
+                <td style="border:1px solid #ddd;padding:0.5rem;"><button type="button" data-modify-index="${index}" style="padding:0.5rem 0.75rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">Modify Batch</button></td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  saveCoachKey.addEventListener("click", () => {
+    if (!getKey()) {
+      coachKeyStatus.textContent = "Enter a key.";
+      return;
+    }
+    sessionStorage.setItem("sealCoachKey", getKey());
+    coachKeyStatus.textContent = "Key saved for this browser session.";
+  });
+
+  document.getElementById("searchParticipants").addEventListener("click", async () => {
+    try {
+      if (!requireKey()) return;
+      if (participantSearch.value.trim().length < 2) {
+        coachStatus.textContent = "Enter at least 2 characters.";
+        return;
+      }
+      coachStatus.textContent = "Searching participants...";
+      await loadBatches();
+      if (!batches.length) {
+        coachStatus.textContent = "No batches found. Add batches to the Batches table first.";
+        return;
+      }
+      const response = await fetch(buildUrl("/coach/participants/search", { q: participantSearch.value.trim() }));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not search participants.");
+      participants = data.participants || [];
+      coachStatus.textContent = "Search complete.";
+      renderSearchResults();
+    } catch (err) {
+      coachStatus.textContent = err.message || "Could not search participants.";
+    }
+  });
+
+  searchResults.addEventListener("click", async event => {
+    const button = event.target.closest("[data-modify-index]");
+    if (!button) return;
+
+    const index = Number(button.dataset.modifyIndex);
+    const batchIds = selectedBatchIds(index);
+    if (!batchIds.length) {
+      coachStatus.textContent = "Select at least one batch.";
+      return;
+    }
+
+    try {
+      const response = await fetch(buildUrl("/coach/batch-assignments"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: getKey(),
+          subscription_id: participants[index].subscription_id,
+          batch_ids: batchIds,
+          from_date: document.getElementById(`modifyFromDate-${index}`).value
+        })
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not update batch assignment.");
+      coachStatus.textContent = "Batch assignment updated.";
+    } catch (err) {
+      coachStatus.textContent = err.message || "Could not update batch assignment.";
+    }
+  });
+});
+</script>
+{% else %}
+<section style="max-width:760px;margin:0 auto;padding:2rem;">
+  <h1>Access denied</h1>
+  <p>You do not have permission to view this page.</p>
+</section>
+{% endif %}

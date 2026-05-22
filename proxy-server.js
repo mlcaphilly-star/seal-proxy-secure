@@ -70,6 +70,8 @@ const daysBetweenInclusive = (fromDate, toDate) => {
   return Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
 };
 
+const previousDateString = (dateValue) => addDaysToDateString(dateValue, -1);
+
 if (!SEAL_TOKEN || !ALLOWED_ORIGIN) {
   console.error('ERROR: SEAL_TOKEN and ALLOWED_ORIGIN must be set in .env file');
   process.exit(1);
@@ -135,6 +137,41 @@ CREATE TABLE IF NOT EXISTS bulk_credit_requests (
 pool.query(createBulkCreditTableSQL)
   .then(() => console.log('bulk_credit_requests table ready'))
   .catch(err => console.error('Error creating bulk_credit_requests table:', err));
+
+const createBatchesTableSQL = `
+CREATE TABLE IF NOT EXISTS batches (
+  batch_id SERIAL PRIMARY KEY,
+  batch_name TEXT NOT NULL,
+  day TEXT NOT NULL,
+  time TEXT NOT NULL,
+  comments TEXT
+);
+`;
+pool.query(createBatchesTableSQL)
+  .then(() => console.log('batches table ready'))
+  .catch(err => console.error('Error creating batches table:', err));
+
+const createBatchAssignmentTableSQL = `
+CREATE TABLE IF NOT EXISTS batch_assignment (
+  id SERIAL PRIMARY KEY,
+  batch_id INT NOT NULL REFERENCES batches(batch_id),
+  subscription_id TEXT NOT NULL,
+  from_date DATE NOT NULL,
+  to_date DATE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createBatchAssignmentTableSQL)
+  .then(() => console.log('batch_assignment table ready'))
+  .catch(err => console.error('Error creating batch_assignment table:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_batch_assignment_subscription_dates ON batch_assignment(subscription_id, from_date, to_date)')
+  .then(() => console.log('batch_assignment subscription/date index ready'))
+  .catch(err => console.error('Error creating batch_assignment subscription/date index:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_batch_assignment_batch_id ON batch_assignment(batch_id)')
+  .then(() => console.log('batch_assignment batch_id index ready'))
+  .catch(err => console.error('Error creating batch_assignment batch_id index:', err));
 
 // Root
 app.get('/', (req, res) => {
@@ -287,6 +324,155 @@ function getNextUnpaidBillingAttempt(billingAttempts = []) {
       return attempt.date && status !== 'completed' && new Date(attempt.date) >= now;
     })
     .sort((a, b) => new Date(a.date) - new Date(b.date))[0] || null;
+}
+
+function participantFromSubscriptionDetail(sub, detail) {
+  const item = detail.items?.[0];
+  if (!item) return null;
+
+  const props = item.properties || [];
+  const childFullName = `${getItemProperty(props, 'Child First Name')} ${getItemProperty(props, 'Child Last Name')}`.trim();
+  const participantName = getItemProperty(props, 'Participant Name') || childFullName;
+
+  return {
+    subscription_id: String(sub.id),
+    product_title: item.title || '',
+    participant_name: participantName,
+    child_first_name: getItemProperty(props, 'Child First Name'),
+    child_last_name: getItemProperty(props, 'Child Last Name'),
+    cricclub_id: getItemProperty(props, 'Child CricClub ID'),
+    program_level: getItemProperty(props, 'Program Level'),
+    parent_email: getItemProperty(props, 'Parent Email') || detail.email || '',
+    parent_mobile: getItemProperty(props, 'Parent Mobile')
+  };
+}
+
+async function fetchActiveParticipants() {
+  const subscriptions = await fetchActiveSealSubscriptions();
+  const participants = [];
+
+  for (const sub of subscriptions) {
+    try {
+      const detail = await fetchSealSubscriptionDetail(sub.id);
+      if (!isActiveSubscription({ status: detail.status || sub.status })) continue;
+
+      const participant = participantFromSubscriptionDetail(sub, detail);
+      if (participant) participants.push(participant);
+    } catch (err) {
+      console.error('Error reading participant for', sub.id, err);
+    }
+  }
+
+  participants.sort((a, b) =>
+    (a.participant_name || '').localeCompare(b.participant_name || '', undefined, { sensitivity: 'base' }) ||
+    (a.subscription_id || '').localeCompare(b.subscription_id || '', undefined, { sensitivity: 'base' })
+  );
+
+  return participants;
+}
+
+async function getCurrentBatchAssignments(subscriptionIds = []) {
+  if (!subscriptionIds.length) return new Map();
+
+  const today = getDateStringInTimeZone(new Date());
+  const sql = `
+    SELECT
+      ba.batch_id,
+      ba.subscription_id,
+      ba.from_date::text,
+      ba.to_date::text,
+      b.batch_name,
+      b.day,
+      b.time,
+      b.comments
+    FROM batch_assignment ba
+    JOIN batches b ON b.batch_id = ba.batch_id
+    WHERE ba.subscription_id = ANY($1::text[])
+      AND ba.from_date <= $2::date
+      AND (ba.to_date IS NULL OR ba.to_date >= $2::date)
+    ORDER BY b.day ASC, b.time ASC, b.batch_name ASC
+  `;
+  const { rows } = await pool.query(sql, [subscriptionIds, today]);
+  const assignmentMap = new Map();
+
+  for (const row of rows) {
+    const existing = assignmentMap.get(row.subscription_id) || [];
+    existing.push(row);
+    assignmentMap.set(row.subscription_id, existing);
+  }
+
+  return assignmentMap;
+}
+
+function normalizeBatchIds(batchIds = []) {
+  const ids = Array.isArray(batchIds) ? batchIds : [batchIds];
+  return [...new Set(ids.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0))];
+}
+
+async function saveBatchAssignments({ subscriptionId, batchIds, fromDate, closeExisting }) {
+  const normalizedIds = normalizeBatchIds(batchIds);
+  if (!subscriptionId) throw new Error('Subscription is required.');
+  if (!normalizedIds.length) throw new Error('At least one batch is required.');
+
+  const effectiveFromDate = fromDate || getDateStringInTimeZone(new Date());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFromDate)) {
+    throw new Error('From date must use YYYY-MM-DD format.');
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const batchCheck = await client.query(
+      'SELECT batch_id FROM batches WHERE batch_id = ANY($1::int[])',
+      [normalizedIds]
+    );
+    if (batchCheck.rows.length !== normalizedIds.length) {
+      throw new Error('One or more selected batches do not exist.');
+    }
+
+    if (closeExisting) {
+      const closeDate = previousDateString(effectiveFromDate);
+      await client.query(
+        `UPDATE batch_assignment
+         SET to_date = $1::date
+         WHERE subscription_id = $2
+           AND from_date <= $3::date
+           AND (to_date IS NULL OR to_date >= $3::date)`,
+        [closeDate, subscriptionId, effectiveFromDate]
+      );
+    } else {
+      const currentCheck = await client.query(
+        `SELECT id
+         FROM batch_assignment
+         WHERE subscription_id = $1
+           AND from_date <= $2::date
+           AND (to_date IS NULL OR to_date >= $2::date)
+         LIMIT 1`,
+        [subscriptionId, effectiveFromDate]
+      );
+      if (currentCheck.rows.length) {
+        throw new Error('Participant already has a current batch assignment.');
+      }
+    }
+
+    for (const batchId of normalizedIds) {
+      await client.query(
+        `INSERT INTO batch_assignment (batch_id, subscription_id, from_date, to_date)
+         VALUES ($1, $2, $3::date, NULL)`,
+        [batchId, subscriptionId, effectiveFromDate]
+      );
+    }
+
+    await client.query('COMMIT');
+    return { subscription_id: subscriptionId, batch_ids: normalizedIds, from_date: effectiveFromDate };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function rescheduleSealBillingAttempt({ billingAttemptId, subscriptionId, date }) {
@@ -695,6 +881,110 @@ app.get('/admin/product-participants', async (req, res) => {
   } catch (err) {
     console.error('Admin product participants report error:', err);
     return res.status(500).json({ success: false, error: 'Failed to generate product participants report.' });
+  }
+});
+
+// -------------------- Coach Batch Assignment APIs --------------------
+app.get('/coach/batches', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT batch_id, batch_name, day, time, comments
+       FROM batches
+       ORDER BY day ASC, time ASC, batch_name ASC`
+    );
+    return res.json({ success: true, batches: rows });
+  } catch (err) {
+    console.error('Coach batches error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load batches.' });
+  }
+});
+
+app.get('/coach/unassigned-participants', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const participants = await fetchActiveParticipants();
+    const assignmentMap = await getCurrentBatchAssignments(participants.map(p => p.subscription_id));
+    const unassigned = participants.filter(p => !assignmentMap.has(p.subscription_id));
+
+    return res.json({ success: true, participants: unassigned });
+  } catch (err) {
+    console.error('Coach unassigned participants error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load unassigned participants.' });
+  }
+});
+
+app.get('/coach/participants/search', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const query = String(req.query.q || '').trim().toLowerCase();
+  if (query.length < 2) {
+    return res.status(400).json({ success: false, error: 'Search must be at least 2 characters.' });
+  }
+
+  try {
+    const participants = await fetchActiveParticipants();
+    const matches = participants.filter(participant => {
+      const searchable = [
+        participant.participant_name,
+        participant.child_first_name,
+        participant.child_last_name,
+        participant.cricclub_id,
+        participant.subscription_id
+      ].join(' ').toLowerCase();
+
+      return searchable.includes(query);
+    });
+    const assignmentMap = await getCurrentBatchAssignments(matches.map(p => p.subscription_id));
+
+    return res.json({
+      success: true,
+      participants: matches.map(participant => ({
+        ...participant,
+        current_assignments: assignmentMap.get(participant.subscription_id) || []
+      }))
+    });
+  } catch (err) {
+    console.error('Coach participant search error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to search participants.' });
+  }
+});
+
+app.post('/coach/batch-assignments', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const result = await saveBatchAssignments({
+      subscriptionId: String(req.body.subscription_id || '').trim(),
+      batchIds: req.body.batch_ids,
+      fromDate: req.body.from_date || null,
+      closeExisting: false
+    });
+
+    return res.json({ success: true, assignment: result });
+  } catch (err) {
+    console.error('Coach batch assignment create error:', err);
+    return res.status(400).json({ success: false, error: err.message || 'Failed to save batch assignment.' });
+  }
+});
+
+app.put('/coach/batch-assignments', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const result = await saveBatchAssignments({
+      subscriptionId: String(req.body.subscription_id || '').trim(),
+      batchIds: req.body.batch_ids,
+      fromDate: req.body.from_date || null,
+      closeExisting: true
+    });
+
+    return res.json({ success: true, assignment: result });
+  } catch (err) {
+    console.error('Coach batch assignment update error:', err);
+    return res.status(400).json({ success: false, error: err.message || 'Failed to update batch assignment.' });
   }
 });
 
