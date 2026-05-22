@@ -2,6 +2,9 @@
 {% if customer and customer.tags contains 'COACH' %}
   {% assign is_coach = true %}
 {% endif %}
+{% if customer and customer.tags contains 'ADMIN' %}
+  {% assign is_coach = true %}
+{% endif %}
 {% if customer and customer.tags contains 'SUPERUSER' %}
   {% assign is_coach = true %}
 {% endif %}
@@ -76,7 +79,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function batchLabel(batch) {
-    return `${batch.batch_name} - ${batch.day} ${batch.time}`;
+    const timeRange = batch.end_time ? `${batch.time}-${batch.end_time}` : batch.time;
+    return `${batch.batch_name} - ${batch.day} ${timeRange}`;
   }
 
   function batchOptions(selectedId) {

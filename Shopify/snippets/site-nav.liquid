@@ -18,6 +18,11 @@
         {% assign show_link = true %}
       {% endif %}
     {% endif %}
+    {% if link.title == 'Parents Corner' or link.title == 'Parent Corner' %}
+      {% if customer and customer.tags contains 'COACH' %}
+        {% assign show_link = false %}
+      {% endif %}
+    {% endif %}
     {% if show_link %}
 
     {% comment %}
@@ -99,7 +104,14 @@
     {% endif %}
     {% endif %}
   {% endfor %}
+  {% assign show_coaches_corner = false %}
   {% if customer and customer.tags contains 'COACH' %}
+    {% assign show_coaches_corner = true %}
+  {% endif %}
+  {% if customer and customer.tags contains 'ADMIN' %}
+    {% assign show_coaches_corner = true %}
+  {% endif %}
+  {% if show_coaches_corner %}
     <li class="site-nav--has-dropdown{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' %} site-nav--active{% endif %}" data-has-dropdowns>
       <button class="site-nav__link site-nav__link--main site-nav__link--button{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' %} site-nav__link--active{% endif %}" type="button" aria-expanded="false" aria-controls="SiteNavLabel-coaches-corner">
         <span class="site-nav__label">Coaches Corner</span>{% include 'icon-chevron-down' %}

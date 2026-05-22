@@ -144,12 +144,17 @@ CREATE TABLE IF NOT EXISTS batches (
   batch_name TEXT NOT NULL,
   day TEXT NOT NULL,
   time TEXT NOT NULL,
+  end_time TEXT,
   comments TEXT
 );
 `;
 pool.query(createBatchesTableSQL)
   .then(() => console.log('batches table ready'))
   .catch(err => console.error('Error creating batches table:', err));
+
+pool.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS end_time TEXT')
+  .then(() => console.log('batches end_time column ready'))
+  .catch(err => console.error('Error creating batches end_time column:', err));
 
 const createBatchAssignmentTableSQL = `
 CREATE TABLE IF NOT EXISTS batch_assignment (
@@ -384,6 +389,7 @@ async function getCurrentBatchAssignments(subscriptionIds = []) {
       b.batch_name,
       b.day,
       b.time,
+      b.end_time,
       b.comments
     FROM batch_assignment ba
     JOIN batches b ON b.batch_id = ba.batch_id
@@ -884,13 +890,133 @@ app.get('/admin/product-participants', async (req, res) => {
   }
 });
 
+// -------------------- Admin Batch Management --------------------
+app.get('/admin/batches', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT batch_id, batch_name, day, time, end_time, comments
+       FROM batches
+       ORDER BY day ASC, time ASC, batch_name ASC`
+    );
+    return res.json({ success: true, batches: rows });
+  } catch (err) {
+    console.error('Admin batches list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load batches.' });
+  }
+});
+
+app.post('/admin/batches', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const batchName = String(req.body.batch_name || '').trim();
+  const day = String(req.body.day || '').trim();
+  const time = String(req.body.time || '').trim();
+  const endTime = String(req.body.end_time || '').trim();
+  const comments = String(req.body.comments || '').trim();
+
+  if (!batchName || !day || !time) {
+    return res.status(400).json({ success: false, error: 'Batch name, day, and time are required.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO batches (batch_name, day, time, end_time, comments)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING batch_id, batch_name, day, time, end_time, comments`,
+      [batchName, day, time, endTime || null, comments]
+    );
+
+    return res.json({ success: true, batch: rows[0] });
+  } catch (err) {
+    console.error('Admin batch create error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create batch.' });
+  }
+});
+
+app.put('/admin/batches/:batchId', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const batchId = Number(req.params.batchId);
+  const batchName = String(req.body.batch_name || '').trim();
+  const day = String(req.body.day || '').trim();
+  const time = String(req.body.time || '').trim();
+  const endTime = String(req.body.end_time || '').trim();
+  const comments = String(req.body.comments || '').trim();
+
+  if (!Number.isInteger(batchId) || batchId < 1) {
+    return res.status(400).json({ success: false, error: 'Invalid batch id.' });
+  }
+
+  if (!batchName || !day || !time) {
+    return res.status(400).json({ success: false, error: 'Batch name, day, and time are required.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE batches
+       SET batch_name = $1, day = $2, time = $3, end_time = $4, comments = $5
+       WHERE batch_id = $6
+       RETURNING batch_id, batch_name, day, time, end_time, comments`,
+      [batchName, day, time, endTime || null, comments, batchId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, error: 'Batch not found.' });
+    }
+
+    return res.json({ success: true, batch: rows[0] });
+  } catch (err) {
+    console.error('Admin batch update error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update batch.' });
+  }
+});
+
+app.delete('/admin/batches/:batchId', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const batchId = Number(req.params.batchId);
+  if (!Number.isInteger(batchId) || batchId < 1) {
+    return res.status(400).json({ success: false, error: 'Invalid batch id.' });
+  }
+
+  try {
+    const activeAssignmentCheck = await pool.query(
+      `SELECT id
+       FROM batch_assignment
+       WHERE batch_id = $1
+         AND (to_date IS NULL OR to_date >= $2::date)
+       LIMIT 1`,
+      [batchId, getDateStringInTimeZone(new Date())]
+    );
+
+    if (activeAssignmentCheck.rows.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Batch has current assignments and cannot be deleted.'
+      });
+    }
+
+    const result = await pool.query('DELETE FROM batches WHERE batch_id = $1', [batchId]);
+    if (!result.rowCount) {
+      return res.status(404).json({ success: false, error: 'Batch not found.' });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Admin batch delete error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete batch.' });
+  }
+});
+
 // -------------------- Coach Batch Assignment APIs --------------------
 app.get('/coach/batches', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
   try {
     const { rows } = await pool.query(
-      `SELECT batch_id, batch_name, day, time, comments
+      `SELECT batch_id, batch_name, day, time, end_time, comments
        FROM batches
        ORDER BY day ASC, time ASC, batch_name ASC`
     );

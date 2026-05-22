@@ -162,6 +162,11 @@
               {% assign show_link = true %}
             {% endif %}
           {% endif %}
+          {% if link.title == 'Parents Corner' or link.title == 'Parent Corner' %}
+            {% if customer and customer.tags contains 'COACH' %}
+              {% assign show_link = false %}
+            {% endif %}
+          {% endif %}
 
           {% if show_link %}
             <li class="mobile-nav__item{% unless forloop.last %} border-bottom{% endunless %}">
@@ -252,7 +257,14 @@
             </li>
           {% endif %}
         {% endfor %}
+        {% assign show_coaches_corner = false %}
         {% if customer and customer.tags contains 'COACH' %}
+          {% assign show_coaches_corner = true %}
+        {% endif %}
+        {% if customer and customer.tags contains 'ADMIN' %}
+          {% assign show_coaches_corner = true %}
+        {% endif %}
+        {% if show_coaches_corner %}
           {% assign coaches_child_list_handle = 'coaches-corner-mobile' %}
           <li class="mobile-nav__item border-bottom">
             <button type="button" class="btn--link js-toggle-submenu mobile-nav__link{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' %} mobile-nav__link--active{% endif %}" data-target="{{ coaches_child_list_handle }}" data-level="1" aria-expanded="false">

@@ -86,10 +86,59 @@
         </button>
       </div>
     </div>
+
+    <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
+      <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Batch Management</h2>
+
+      <input id="batchId" type="hidden">
+
+      <label for="batchName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Batch Name</label>
+      <input id="batchName" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.75rem;margin-bottom:0.75rem;">
+        <div>
+          <label for="batchDay" style="display:block;font-weight:600;margin-bottom:0.35rem;">Day</label>
+          <select id="batchDay" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+            <option value="">Select day</option>
+            <option>Monday</option>
+            <option>Tuesday</option>
+            <option>Wednesday</option>
+            <option>Thursday</option>
+            <option>Friday</option>
+            <option>Saturday</option>
+            <option>Sunday</option>
+          </select>
+        </div>
+        <div>
+          <label for="batchTime" style="display:block;font-weight:600;margin-bottom:0.35rem;">Start Time</label>
+          <input id="batchTime" type="time" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+        </div>
+        <div>
+          <label for="batchEndTime" style="display:block;font-weight:600;margin-bottom:0.35rem;">End Time</label>
+          <input id="batchEndTime" type="time" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+        </div>
+      </div>
+
+      <label for="batchComments" style="display:block;font-weight:600;margin-bottom:0.35rem;">Comments</label>
+      <textarea id="batchComments" rows="3" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;"></textarea>
+
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button id="saveBatch" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
+          Save Batch
+        </button>
+        <button id="clearBatchForm" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">
+          Clear
+        </button>
+        <button id="loadBatches" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">
+          Load Batches
+        </button>
+      </div>
+    </div>
   </div>
 
   <div id="adminStatus" style="margin-top:1rem;font-weight:600;"></div>
   <div id="bulkResults" style="margin-top:1rem;overflow-x:auto;"></div>
+  <div id="batchResults" style="margin-top:1rem;overflow-x:auto;"></div>
 </section>
 
 <script>
@@ -108,6 +157,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const creditToDate = document.getElementById("creditToDate");
   const creditDays = document.getElementById("creditDays");
   const bulkResults = document.getElementById("bulkResults");
+  const batchResults = document.getElementById("batchResults");
+  const batchId = document.getElementById("batchId");
+  const batchName = document.getElementById("batchName");
+  const batchDay = document.getElementById("batchDay");
+  const batchTime = document.getElementById("batchTime");
+  const batchEndTime = document.getElementById("batchEndTime");
+  const batchComments = document.getElementById("batchComments");
   const upcomingMonth = document.getElementById("upcomingMonth");
 
   const savedKey = sessionStorage.getItem("sealAdminKey") || "";
@@ -151,6 +207,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     return payload;
+  }
+
+  function buildBatchPayload() {
+    return {
+      batch_name: batchName.value.trim(),
+      day: batchDay.value,
+      time: batchTime.value,
+      end_time: batchEndTime.value,
+      comments: batchComments.value.trim()
+    };
+  }
+
+  function clearBatchForm() {
+    batchId.value = "";
+    batchName.value = "";
+    batchDay.value = "";
+    batchTime.value = "";
+    batchEndTime.value = "";
+    batchComments.value = "";
+    document.getElementById("saveBatch").textContent = "Save Batch";
   }
 
   function populateProductSelect(select, products, selectedValue) {
@@ -262,6 +338,48 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
+  function renderBatches(batches) {
+    if (!batches.length) {
+      batchResults.innerHTML = "<p>No batches found.</p>";
+      return;
+    }
+
+    batchResults.innerHTML = `
+      <h2 style="font-size:1.15rem;">Batches</h2>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Name</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Start Time</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">End Time</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Comments</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${batches.map(batch => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_id || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_name || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.day || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.time || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.end_time || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.comments || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">
+                <button type="button" data-edit-batch="${batch.batch_id}" style="padding:0.45rem 0.65rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">Edit</button>
+                <button type="button" data-delete-batch="${batch.batch_id}" style="padding:0.45rem 0.65rem;border:0;border-radius:4px;background:#b91c1c;color:#fff;margin-left:0.35rem;">Delete</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+
+    batchResults.dataset.batches = JSON.stringify(batches);
+  }
+
   saveAdminKey.addEventListener("click", () => {
     if (!getAdminKey()) {
       keyStatus.textContent = "Enter a key.";
@@ -314,6 +432,94 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadReportProducts.addEventListener("click", loadSubscriptionProducts);
   loadProducts.addEventListener("click", loadSubscriptionProducts);
+
+  async function loadBatchList() {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading batches...";
+
+    try {
+      const response = await fetch(buildUrl("/admin/batches"));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load batches.");
+
+      adminStatus.textContent = "Batches loaded.";
+      renderBatches(data.batches || []);
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load batches.";
+    }
+  }
+
+  document.getElementById("loadBatches").addEventListener("click", loadBatchList);
+  document.getElementById("clearBatchForm").addEventListener("click", clearBatchForm);
+
+  document.getElementById("saveBatch").addEventListener("click", async () => {
+    if (!requireKey()) return;
+
+    const payload = buildBatchPayload();
+    if (!payload.batch_name || !payload.day || !payload.time) {
+      adminStatus.textContent = "Batch name, day, and start time are required.";
+      return;
+    }
+
+    const editing = Boolean(batchId.value);
+    adminStatus.textContent = editing ? "Updating batch..." : "Creating batch...";
+
+    try {
+      const response = await fetch(buildUrl(editing ? `/admin/batches/${batchId.value}` : "/admin/batches"), {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not save batch.");
+
+      adminStatus.textContent = editing ? "Batch updated." : "Batch created.";
+      clearBatchForm();
+      await loadBatchList();
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not save batch.";
+    }
+  });
+
+  batchResults.addEventListener("click", async event => {
+    const editButton = event.target.closest("[data-edit-batch]");
+    const deleteButton = event.target.closest("[data-delete-batch]");
+    const batches = JSON.parse(batchResults.dataset.batches || "[]");
+
+    if (editButton) {
+      const batch = batches.find(row => String(row.batch_id) === String(editButton.dataset.editBatch));
+      if (!batch) return;
+
+      batchId.value = batch.batch_id || "";
+      batchName.value = batch.batch_name || "";
+      batchDay.value = batch.day || "";
+      batchTime.value = batch.time || "";
+      batchEndTime.value = batch.end_time || "";
+      batchComments.value = batch.comments || "";
+      document.getElementById("saveBatch").textContent = "Update Batch";
+      adminStatus.textContent = "Editing batch.";
+      return;
+    }
+
+    if (deleteButton) {
+      if (!requireKey()) return;
+      if (!confirm("Delete this batch? Batches with current assignments cannot be deleted.")) return;
+
+      adminStatus.textContent = "Deleting batch...";
+      try {
+        const response = await fetch(buildUrl(`/admin/batches/${deleteButton.dataset.deleteBatch}`), {
+          method: "DELETE"
+        });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || "Could not delete batch.");
+
+        adminStatus.textContent = "Batch deleted.";
+        await loadBatchList();
+      } catch (err) {
+        adminStatus.textContent = err.message || "Could not delete batch.";
+      }
+    }
+  });
 
   async function submitBulkCredit(dryRun) {
     if (!requireKey()) return;
