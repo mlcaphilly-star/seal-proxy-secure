@@ -44,6 +44,20 @@ const findSubscriptionItemByProduct = (subscription, normalizedProductName) =>
     normalizeProductName(item.title || '') === normalizedProductName
   ) || null;
 
+const getItemProperty = (properties = [], key) => {
+  const searchKey = key.trim().toLowerCase();
+
+  for (const p of properties || []) {
+    const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
+    if (normalized === searchKey) return p.value || '';
+  }
+
+  return '';
+};
+
+const escapeCsv = (value = '') =>
+  `"${String(value ?? '').replace(/"/g, '""')}"`;
+
 const addDaysToDateString = (dateValue, days) => {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days));
@@ -590,6 +604,97 @@ app.get('/admin/subscription-products', async (req, res) => {
   } catch (err) {
     console.error('Admin subscription products error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load subscription products.' });
+  }
+});
+
+// -------------------- Admin Active Participants by Product Report --------------------
+app.get('/admin/product-participants', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const productTitle = (req.query.product_title || '').trim();
+  if (!productTitle) {
+    return res.status(400).json({ success: false, error: 'Product is required.' });
+  }
+
+  const requestedProduct = normalizeProductName(productTitle);
+
+  try {
+    const subscriptions = await fetchActiveSealSubscriptions();
+    const rows = [[
+      'Product',
+      'Participant Name',
+      'Subscription ID',
+      'Parent First Name',
+      'Parent Last Name',
+      'Parent Email',
+      'Parent Mobile',
+      'Child First Name',
+      'Child Last Name',
+      'Child DOB',
+      'CricClub ID',
+      'Program Level',
+      'Billing Interval',
+      'Next Billing Date'
+    ]];
+
+    for (const sub of subscriptions) {
+      try {
+        const listMatchedItem = findSubscriptionItemByProduct(sub, requestedProduct);
+        if (Array.isArray(sub.items) && sub.items.length > 0 && !listMatchedItem) {
+          continue;
+        }
+
+        const detail = await fetchSealSubscriptionDetail(sub.id);
+        if (!isActiveSubscription({ status: detail.status || sub.status })) continue;
+
+        const matchedItem = (detail.items || []).find(item =>
+          normalizeProductName(item.title || '') === requestedProduct
+        ) || listMatchedItem;
+        if (!matchedItem) continue;
+
+        const props = matchedItem.properties || [];
+        const childFullName = `${getItemProperty(props, 'Child First Name')} ${getItemProperty(props, 'Child Last Name')}`.trim();
+        const participantName = getItemProperty(props, 'Participant Name') || childFullName;
+        const nextAttempt = getNextUnpaidBillingAttempt(detail.billing_attempts || []);
+
+        rows.push([
+          matchedItem.title || productTitle,
+          participantName,
+          sub.id,
+          getItemProperty(props, 'Parent First Name'),
+          getItemProperty(props, 'Parent Last Name'),
+          getItemProperty(props, 'Parent Email') || detail.email || '',
+          getItemProperty(props, 'Parent Mobile'),
+          getItemProperty(props, 'Child First Name'),
+          getItemProperty(props, 'Child Last Name'),
+          getItemProperty(props, 'Child DOB'),
+          getItemProperty(props, 'Child CricClub ID'),
+          getItemProperty(props, 'Program Level'),
+          getItemProperty(props, 'Billing Interval') || sub.billing_interval || '',
+          nextAttempt?.date || ''
+        ]);
+      } catch (err) {
+        console.error('Error reading product participant for', sub.id, err);
+      }
+    }
+
+    const [header, ...participantRows] = rows;
+    participantRows.sort((a, b) =>
+      (a[1] || '').localeCompare(b[1] || '', undefined, { sensitivity: 'base' }) ||
+      (a[2] || '').localeCompare(b[2] || '', undefined, { sensitivity: 'base' })
+    );
+
+    const csv = [header, ...participantRows]
+      .map(row => row.map(escapeCsv).join(','))
+      .join('\n') + '\n';
+    const safeProduct = normalizeProductName(productTitle).replace(/\s+/g, '_') || 'product';
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=active_participants_${safeProduct}.csv`);
+    return res.send(csv);
+  } catch (err) {
+    console.error('Admin product participants report error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to generate product participants report.' });
   }
 });
 

@@ -1,0 +1,361 @@
+{% if customer and customer.tags contains 'SUPERUSER' %}
+<section class="admin-tools" style="max-width:1100px;margin:0 auto;padding:2rem;">
+  <h1 style="margin-bottom:1rem;">Admin Tools</h1>
+
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+    <label for="adminKey" style="display:block;font-weight:600;margin-bottom:0.35rem;">Admin Key</label>
+    <input id="adminKey" type="password" autocomplete="off" style="width:100%;max-width:420px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="saveAdminKey" type="button" style="margin-left:0.5rem;padding:0.55rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Use Key</button>
+    <span id="keyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;">
+    <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
+      <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Reports</h2>
+
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <button class="admin-report" data-path="/admin/seal-report" type="button" style="padding:0.65rem;border:0;border-radius:4px;background:#2563eb;color:#fff;text-align:left;">
+          Active Seal Subscription Report
+        </button>
+
+        <button class="admin-report" data-path="/admin/outdoor-warminster-participants" type="button" style="padding:0.65rem;border:0;border-radius:4px;background:#2563eb;color:#fff;text-align:left;">
+          Outdoor Coaching Participants
+        </button>
+
+        <button id="showCurrentVacations" type="button" style="padding:0.65rem;border:0;border-radius:4px;background:#0f766e;color:#fff;text-align:left;">
+          Current Vacations
+        </button>
+
+        <div>
+          <label for="reportProduct" style="display:block;font-weight:600;margin-bottom:0.35rem;">Active Participants Product</label>
+          <select id="reportProduct" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.5rem;">
+            <option value="">Enter admin key, then load products</option>
+          </select>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button id="loadReportProducts" type="button" style="padding:0.55rem 0.8rem;border:0;border-radius:4px;background:#111;color:#fff;">
+              Load Products
+            </button>
+            <button id="downloadProductParticipants" type="button" style="padding:0.55rem 0.8rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">
+              Download Participants
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label for="upcomingMonth" style="display:block;font-weight:600;margin-bottom:0.35rem;">Upcoming Payments Month</label>
+          <input id="upcomingMonth" type="month" style="padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+          <button id="downloadUpcoming" type="button" style="margin-left:0.35rem;padding:0.6rem 0.8rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">
+            Download
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
+      <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Bulk Coaching Credit</h2>
+
+      <label for="bulkProduct" style="display:block;font-weight:600;margin-bottom:0.35rem;">Product</label>
+      <select id="bulkProduct" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+        <option value="">Enter admin key, then load products</option>
+      </select>
+
+      <button id="loadProducts" type="button" style="padding:0.55rem 0.8rem;border:0;border-radius:4px;background:#111;color:#fff;margin-bottom:1rem;">
+        Load Products
+      </button>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem;">
+        <div>
+          <label for="creditFromDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">From Date</label>
+          <input id="creditFromDate" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+        </div>
+        <div>
+          <label for="creditToDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">To Date</label>
+          <input id="creditToDate" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+        </div>
+      </div>
+
+      <label for="creditDays" style="display:block;font-weight:600;margin-bottom:0.35rem;">Number of Days</label>
+      <input id="creditDays" type="number" min="1" max="365" step="1" placeholder="Use this OR from/to dates" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button id="previewBulkCredit" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
+          Preview
+        </button>
+        <button id="applyBulkCredit" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#b91c1c;color:#fff;">
+          Apply Credit
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="adminStatus" style="margin-top:1rem;font-weight:600;"></div>
+  <div id="bulkResults" style="margin-top:1rem;overflow-x:auto;"></div>
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const proxyBase = "https://seal-proxy-secure.onrender.com";
+  const adminKeyInput = document.getElementById("adminKey");
+  const saveAdminKey = document.getElementById("saveAdminKey");
+  const keyStatus = document.getElementById("keyStatus");
+  const adminStatus = document.getElementById("adminStatus");
+  const reportProduct = document.getElementById("reportProduct");
+  const bulkProduct = document.getElementById("bulkProduct");
+  const loadProducts = document.getElementById("loadProducts");
+  const loadReportProducts = document.getElementById("loadReportProducts");
+  const downloadProductParticipants = document.getElementById("downloadProductParticipants");
+  const creditFromDate = document.getElementById("creditFromDate");
+  const creditToDate = document.getElementById("creditToDate");
+  const creditDays = document.getElementById("creditDays");
+  const bulkResults = document.getElementById("bulkResults");
+  const upcomingMonth = document.getElementById("upcomingMonth");
+
+  const savedKey = sessionStorage.getItem("sealAdminKey") || "";
+  if (savedKey) {
+    adminKeyInput.value = savedKey;
+    keyStatus.textContent = "Key loaded for this browser session.";
+  }
+
+  function getAdminKey() {
+    return adminKeyInput.value.trim();
+  }
+
+  function requireKey() {
+    if (!getAdminKey()) {
+      adminStatus.textContent = "Enter the admin key first.";
+      return false;
+    }
+    return true;
+  }
+
+  function buildUrl(path, params = {}) {
+    const url = new URL(proxyBase + path);
+    url.searchParams.set("key", getAdminKey());
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  function buildBulkPayload(dryRun) {
+    const payload = {
+      product_title: bulkProduct.value,
+      dry_run: dryRun
+    };
+
+    if (creditDays.value) {
+      payload.credit_days = Number(creditDays.value);
+    } else {
+      payload.from_date = creditFromDate.value;
+      payload.to_date = creditToDate.value;
+    }
+
+    return payload;
+  }
+
+  function populateProductSelect(select, products, selectedValue) {
+    select.innerHTML = '<option value="">Select product</option>';
+    for (const product of products || []) {
+      const option = document.createElement("option");
+      option.value = product.product_title;
+      option.textContent = `${product.product_title} (${product.active_subscription_count})`;
+      select.appendChild(option);
+    }
+    if (selectedValue) select.value = selectedValue;
+  }
+
+  async function loadSubscriptionProducts() {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading products...";
+    const currentReportProduct = reportProduct.value;
+    const currentBulkProduct = bulkProduct.value;
+    reportProduct.innerHTML = '<option value="">Loading...</option>';
+    bulkProduct.innerHTML = '<option value="">Loading...</option>';
+
+    try {
+      const response = await fetch(buildUrl("/admin/subscription-products"));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load products.");
+
+      populateProductSelect(reportProduct, data.products, currentReportProduct);
+      populateProductSelect(bulkProduct, data.products, currentBulkProduct);
+      adminStatus.textContent = "Products loaded.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load products.";
+      reportProduct.innerHTML = '<option value="">Unable to load products</option>';
+      bulkProduct.innerHTML = '<option value="">Unable to load products</option>';
+    }
+  }
+
+  function renderBulkResults(data) {
+    const rows = data.results || [];
+    bulkResults.innerHTML = `
+      <h2 style="font-size:1.15rem;">Bulk Credit ${data.dry_run ? "Preview" : "Result"}</h2>
+      <p>
+        Product: <strong>${data.product_title}</strong> |
+        Days: <strong>${data.credit_days}</strong> |
+        Matched: <strong>${data.matched_count}</strong> |
+        Updated: <strong>${data.updated_count}</strong> |
+        Failed: <strong>${data.failed_count}</strong>
+      </p>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Subscription</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Email</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Original Payment</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">New Payment</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Status</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.subscription_id || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.email || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.original_payment_date || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.new_payment_date || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.status || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.error || ""}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderCurrentVacations(data) {
+    const rows = data.vacations || [];
+    bulkResults.innerHTML = `
+      <h2 style="font-size:1.15rem;">Current Vacations</h2>
+      <p>
+        Report Date: <strong>${data.report_date || ""}</strong> |
+        Active Vacation Requests: <strong>${data.count || 0}</strong>
+      </p>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Vacation ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">From</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">To</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Days</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Subscription</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.id || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.child_name || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.from_date || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.to_date || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.shift_days || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.subscription_id || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.reason || ""}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  saveAdminKey.addEventListener("click", () => {
+    if (!getAdminKey()) {
+      keyStatus.textContent = "Enter a key.";
+      return;
+    }
+    sessionStorage.setItem("sealAdminKey", getAdminKey());
+    keyStatus.textContent = "Key saved for this browser session.";
+  });
+
+  document.querySelectorAll(".admin-report").forEach(button => {
+    button.addEventListener("click", () => {
+      if (!requireKey()) return;
+      window.open(buildUrl(button.dataset.path), "_blank");
+    });
+  });
+
+  document.getElementById("downloadUpcoming").addEventListener("click", () => {
+    if (!requireKey()) return;
+    if (!upcomingMonth.value) {
+      adminStatus.textContent = "Choose a month for the upcoming payments report.";
+      return;
+    }
+    window.open(buildUrl("/seal-upcoming-payments", { month: upcomingMonth.value }), "_blank");
+  });
+
+  downloadProductParticipants.addEventListener("click", () => {
+    if (!requireKey()) return;
+    if (!reportProduct.value) {
+      adminStatus.textContent = "Select a product for the participants report.";
+      return;
+    }
+    window.open(buildUrl("/admin/product-participants", { product_title: reportProduct.value }), "_blank");
+  });
+
+  document.getElementById("showCurrentVacations").addEventListener("click", async () => {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading current vacations...";
+
+    try {
+      const response = await fetch(buildUrl("/admin/current-vacations"));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load current vacations.");
+
+      adminStatus.textContent = "Current vacations loaded.";
+      renderCurrentVacations(data);
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load current vacations.";
+    }
+  });
+
+  loadReportProducts.addEventListener("click", loadSubscriptionProducts);
+  loadProducts.addEventListener("click", loadSubscriptionProducts);
+
+  async function submitBulkCredit(dryRun) {
+    if (!requireKey()) return;
+    if (!bulkProduct.value) {
+      adminStatus.textContent = "Select a product.";
+      return;
+    }
+    if (!creditDays.value && (!creditFromDate.value || !creditToDate.value)) {
+      adminStatus.textContent = "Enter number of days, or choose both from and to dates.";
+      return;
+    }
+    if (!dryRun && !confirm("This will update billing schedules for all matching subscriptions. Continue?")) {
+      return;
+    }
+
+    adminStatus.textContent = dryRun ? "Previewing bulk credit..." : "Applying bulk credit...";
+
+    try {
+      const response = await fetch(buildUrl("/admin/bulk-credit"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildBulkPayload(dryRun))
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Bulk credit failed.");
+
+      adminStatus.textContent = dryRun
+        ? "Preview ready. No billing schedules were changed."
+        : "Bulk credit applied.";
+      renderBulkResults(data);
+    } catch (err) {
+      adminStatus.textContent = err.message || "Bulk credit failed.";
+    }
+  }
+
+  document.getElementById("previewBulkCredit").addEventListener("click", () => submitBulkCredit(true));
+  document.getElementById("applyBulkCredit").addEventListener("click", () => submitBulkCredit(false));
+});
+</script>
+{% else %}
+<section style="max-width:760px;margin:0 auto;padding:2rem;">
+  <h1>Access denied</h1>
+  <p>You do not have permission to view this page.</p>
+</section>
+{% endif %}
