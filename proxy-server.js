@@ -138,9 +138,26 @@ pool.query(createBulkCreditTableSQL)
   .then(() => console.log('bulk_credit_requests table ready'))
   .catch(err => console.error('Error creating bulk_credit_requests table:', err));
 
+const createLocationsTableSQL = `
+CREATE TABLE IF NOT EXISTS locations (
+  location_id SERIAL PRIMARY KEY,
+  location_name TEXT NOT NULL,
+  address_1 TEXT NOT NULL,
+  address_2 TEXT,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  zip TEXT NOT NULL,
+  country TEXT NOT NULL
+);
+`;
+pool.query(createLocationsTableSQL)
+  .then(() => console.log('locations table ready'))
+  .catch(err => console.error('Error creating locations table:', err));
+
 const createBatchesTableSQL = `
 CREATE TABLE IF NOT EXISTS batches (
   batch_id SERIAL PRIMARY KEY,
+  location_id INT,
   batch_name TEXT NOT NULL,
   day TEXT NOT NULL,
   time TEXT NOT NULL,
@@ -155,6 +172,27 @@ pool.query(createBatchesTableSQL)
 pool.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS end_time TEXT')
   .then(() => console.log('batches end_time column ready'))
   .catch(err => console.error('Error creating batches end_time column:', err));
+
+pool.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS location_id INT')
+  .then(() => console.log('batches location_id column ready'))
+  .catch(err => console.error('Error creating batches location_id column:', err));
+
+pool.query(`
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'batches_location_id_fkey'
+    ) THEN
+      ALTER TABLE batches
+      ADD CONSTRAINT batches_location_id_fkey
+      FOREIGN KEY (location_id) REFERENCES locations(location_id);
+    END IF;
+  END $$;
+`)
+  .then(() => console.log('batches location foreign key ready'))
+  .catch(err => console.error('Error creating batches location foreign key:', err));
 
 const createBatchAssignmentTableSQL = `
 CREATE TABLE IF NOT EXISTS batch_assignment (
@@ -343,8 +381,12 @@ function participantFromSubscriptionDetail(sub, detail) {
     subscription_id: String(sub.id),
     product_title: item.title || '',
     participant_name: participantName,
+    parent_name: `${getItemProperty(props, 'Parent First Name')} ${getItemProperty(props, 'Parent Last Name')}`.trim(),
+    parent_first_name: getItemProperty(props, 'Parent First Name'),
+    parent_last_name: getItemProperty(props, 'Parent Last Name'),
     child_first_name: getItemProperty(props, 'Child First Name'),
     child_last_name: getItemProperty(props, 'Child Last Name'),
+    dob: getItemProperty(props, 'Child DOB'),
     cricclub_id: getItemProperty(props, 'Child CricClub ID'),
     program_level: getItemProperty(props, 'Program Level'),
     parent_email: getItemProperty(props, 'Parent Email') || detail.email || '',
@@ -386,17 +428,26 @@ async function getCurrentBatchAssignments(subscriptionIds = []) {
       ba.subscription_id,
       ba.from_date::text,
       ba.to_date::text,
+      b.location_id,
       b.batch_name,
       b.day,
       b.time,
       b.end_time,
-      b.comments
+      b.comments,
+      l.location_name,
+      l.address_1,
+      l.address_2,
+      l.city,
+      l.state,
+      l.zip,
+      l.country
     FROM batch_assignment ba
     JOIN batches b ON b.batch_id = ba.batch_id
+    LEFT JOIN locations l ON l.location_id = b.location_id
     WHERE ba.subscription_id = ANY($1::text[])
       AND ba.from_date <= $2::date
       AND (ba.to_date IS NULL OR ba.to_date >= $2::date)
-    ORDER BY b.day ASC, b.time ASC, b.batch_name ASC
+    ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC
   `;
   const { rows } = await pool.query(sql, [subscriptionIds, today]);
   const assignmentMap = new Map();
@@ -891,14 +942,72 @@ app.get('/admin/product-participants', async (req, res) => {
 });
 
 // -------------------- Admin Batch Management --------------------
+app.get('/admin/locations', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT location_id, location_name, address_1, address_2, city, state, zip, country
+       FROM locations
+       ORDER BY location_name ASC, city ASC`
+    );
+    return res.json({ success: true, locations: rows });
+  } catch (err) {
+    console.error('Admin locations list error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load locations.' });
+  }
+});
+
+app.post('/admin/locations', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const locationName = String(req.body.location_name || '').trim();
+  const address1 = String(req.body.address_1 || '').trim();
+  const address2 = String(req.body.address_2 || '').trim();
+  const city = String(req.body.city || '').trim();
+  const state = String(req.body.state || '').trim();
+  const zip = String(req.body.zip || '').trim();
+  const country = String(req.body.country || '').trim();
+
+  if (!locationName || !address1 || !city || !state || !zip || !country) {
+    return res.status(400).json({
+      success: false,
+      error: 'Location name, address 1, city, state, zip, and country are required.'
+    });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO locations (location_name, address_1, address_2, city, state, zip, country)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING location_id, location_name, address_1, address_2, city, state, zip, country`,
+      [locationName, address1, address2 || null, city, state, zip, country]
+    );
+
+    return res.json({ success: true, location: rows[0] });
+  } catch (err) {
+    console.error('Admin location create error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create location.' });
+  }
+});
+
 app.get('/admin/batches', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
   try {
     const { rows } = await pool.query(
-      `SELECT batch_id, batch_name, day, time, end_time, comments
-       FROM batches
-       ORDER BY day ASC, time ASC, batch_name ASC`
+      `SELECT
+         b.batch_id,
+         b.location_id,
+         b.batch_name,
+         b.day,
+         b.time,
+         b.end_time,
+         b.comments,
+         l.location_name
+       FROM batches b
+       LEFT JOIN locations l ON l.location_id = b.location_id
+       ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC`
     );
     return res.json({ success: true, batches: rows });
   } catch (err) {
@@ -910,22 +1019,23 @@ app.get('/admin/batches', async (req, res) => {
 app.post('/admin/batches', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
+  const locationId = Number(req.body.location_id || 0);
   const batchName = String(req.body.batch_name || '').trim();
   const day = String(req.body.day || '').trim();
   const time = String(req.body.time || '').trim();
   const endTime = String(req.body.end_time || '').trim();
   const comments = String(req.body.comments || '').trim();
 
-  if (!batchName || !day || !time) {
-    return res.status(400).json({ success: false, error: 'Batch name, day, and time are required.' });
+  if (!Number.isInteger(locationId) || locationId < 1 || !batchName || !day || !time) {
+    return res.status(400).json({ success: false, error: 'Location, batch name, day, and time are required.' });
   }
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO batches (batch_name, day, time, end_time, comments)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING batch_id, batch_name, day, time, end_time, comments`,
-      [batchName, day, time, endTime || null, comments]
+      `INSERT INTO batches (location_id, batch_name, day, time, end_time, comments)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments`,
+      [locationId, batchName, day, time, endTime || null, comments]
     );
 
     return res.json({ success: true, batch: rows[0] });
@@ -939,6 +1049,7 @@ app.put('/admin/batches/:batchId', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
   const batchId = Number(req.params.batchId);
+  const locationId = Number(req.body.location_id || 0);
   const batchName = String(req.body.batch_name || '').trim();
   const day = String(req.body.day || '').trim();
   const time = String(req.body.time || '').trim();
@@ -949,17 +1060,17 @@ app.put('/admin/batches/:batchId', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Invalid batch id.' });
   }
 
-  if (!batchName || !day || !time) {
-    return res.status(400).json({ success: false, error: 'Batch name, day, and time are required.' });
+  if (!Number.isInteger(locationId) || locationId < 1 || !batchName || !day || !time) {
+    return res.status(400).json({ success: false, error: 'Location, batch name, day, and time are required.' });
   }
 
   try {
     const { rows } = await pool.query(
       `UPDATE batches
-       SET batch_name = $1, day = $2, time = $3, end_time = $4, comments = $5
-       WHERE batch_id = $6
-       RETURNING batch_id, batch_name, day, time, end_time, comments`,
-      [batchName, day, time, endTime || null, comments, batchId]
+       SET location_id = $1, batch_name = $2, day = $3, time = $4, end_time = $5, comments = $6
+       WHERE batch_id = $7
+       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments`,
+      [locationId, batchName, day, time, endTime || null, comments, batchId]
     );
 
     if (!rows.length) {
@@ -1016,9 +1127,18 @@ app.get('/coach/batches', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT batch_id, batch_name, day, time, end_time, comments
-       FROM batches
-       ORDER BY day ASC, time ASC, batch_name ASC`
+      `SELECT
+         b.batch_id,
+         b.location_id,
+         b.batch_name,
+         b.day,
+         b.time,
+         b.end_time,
+         b.comments,
+         l.location_name
+       FROM batches b
+       LEFT JOIN locations l ON l.location_id = b.location_id
+       ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC`
     );
     return res.json({ success: true, batches: rows });
   } catch (err) {
@@ -1074,6 +1194,49 @@ app.get('/coach/participants/search', async (req, res) => {
     });
   } catch (err) {
     console.error('Coach participant search error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to search participants.' });
+  }
+});
+
+app.get('/coach/participants/details-search', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const participantName = String(req.query.participant_name || '').trim().toLowerCase();
+  const parentName = String(req.query.parent_name || '').trim().toLowerCase();
+  const cricclubId = String(req.query.cricclub_id || '').trim().toLowerCase();
+  const batchName = String(req.query.batch_name || '').trim().toLowerCase();
+
+  if (!participantName && !parentName && !cricclubId && !batchName) {
+    return res.status(400).json({
+      success: false,
+      error: 'Enter participant name, parent name, CricClub ID, or batch name.'
+    });
+  }
+
+  try {
+    const participants = await fetchActiveParticipants();
+    const assignmentMap = await getCurrentBatchAssignments(participants.map(p => p.subscription_id));
+    const matches = participants.filter(participant => {
+      const assignments = assignmentMap.get(participant.subscription_id) || [];
+      const participantMatches = !participantName || String(participant.participant_name || '').toLowerCase().includes(participantName);
+      const parentMatches = !parentName || String(participant.parent_name || '').toLowerCase().includes(parentName);
+      const cricclubMatches = !cricclubId || String(participant.cricclub_id || '').toLowerCase().includes(cricclubId);
+      const batchMatches = !batchName || assignments.some(assignment =>
+        String(assignment.batch_name || '').toLowerCase().includes(batchName)
+      );
+
+      return participantMatches && parentMatches && cricclubMatches && batchMatches;
+    });
+
+    return res.json({
+      success: true,
+      participants: matches.map(participant => ({
+        ...participant,
+        current_assignments: assignmentMap.get(participant.subscription_id) || []
+      }))
+    });
+  } catch (err) {
+    console.error('Coach participant details search error:', err);
     return res.status(500).json({ success: false, error: 'Failed to search participants.' });
   }
 });

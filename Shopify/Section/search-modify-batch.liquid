@@ -80,7 +80,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function batchLabel(batch) {
     const timeRange = batch.end_time ? `${batch.time}-${batch.end_time}` : batch.time;
-    return `${batch.batch_name} - ${batch.day} ${timeRange}`;
+    const location = batch.location_name ? `${batch.location_name} - ` : "";
+    return `${location}${batch.batch_name} - ${batch.day} ${timeRange}`;
   }
 
   function batchOptions(selectedId) {

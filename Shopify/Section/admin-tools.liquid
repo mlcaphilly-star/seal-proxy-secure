@@ -90,7 +90,50 @@
     <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
       <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Batch Management</h2>
 
+      <div style="border-bottom:1px solid #ddd;padding-bottom:1rem;margin-bottom:1rem;">
+        <h3 style="font-size:1rem;margin:0 0 0.75rem;">New Location</h3>
+        <label for="locationName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Location Name</label>
+        <input id="locationName" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+        <label for="locationAddress1" style="display:block;font-weight:600;margin-bottom:0.35rem;">Address 1</label>
+        <input id="locationAddress1" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+        <label for="locationAddress2" style="display:block;font-weight:600;margin-bottom:0.35rem;">Address 2</label>
+        <input id="locationAddress2" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem;">
+          <div>
+            <label for="locationCity" style="display:block;font-weight:600;margin-bottom:0.35rem;">City</label>
+            <input id="locationCity" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+          </div>
+          <div>
+            <label for="locationState" style="display:block;font-weight:600;margin-bottom:0.35rem;">State</label>
+            <input id="locationState" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem;">
+          <div>
+            <label for="locationZip" style="display:block;font-weight:600;margin-bottom:0.35rem;">Zip</label>
+            <input id="locationZip" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+          </div>
+          <div>
+            <label for="locationCountry" style="display:block;font-weight:600;margin-bottom:0.35rem;">Country</label>
+            <input id="locationCountry" type="text" value="USA" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+          </div>
+        </div>
+
+        <button id="saveLocation" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
+          Save Location
+        </button>
+      </div>
+
       <input id="batchId" type="hidden">
+
+      <label for="batchLocation" style="display:block;font-weight:600;margin-bottom:0.35rem;">Location</label>
+      <select id="batchLocation" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+        <option value="">Load or create a location first</option>
+      </select>
 
       <label for="batchName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Batch Name</label>
       <input id="batchName" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
@@ -158,7 +201,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const creditDays = document.getElementById("creditDays");
   const bulkResults = document.getElementById("bulkResults");
   const batchResults = document.getElementById("batchResults");
+  const locationName = document.getElementById("locationName");
+  const locationAddress1 = document.getElementById("locationAddress1");
+  const locationAddress2 = document.getElementById("locationAddress2");
+  const locationCity = document.getElementById("locationCity");
+  const locationState = document.getElementById("locationState");
+  const locationZip = document.getElementById("locationZip");
+  const locationCountry = document.getElementById("locationCountry");
   const batchId = document.getElementById("batchId");
+  const batchLocation = document.getElementById("batchLocation");
   const batchName = document.getElementById("batchName");
   const batchDay = document.getElementById("batchDay");
   const batchTime = document.getElementById("batchTime");
@@ -211,6 +262,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function buildBatchPayload() {
     return {
+      location_id: Number(batchLocation.value),
       batch_name: batchName.value.trim(),
       day: batchDay.value,
       time: batchTime.value,
@@ -219,8 +271,31 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  function buildLocationPayload() {
+    return {
+      location_name: locationName.value.trim(),
+      address_1: locationAddress1.value.trim(),
+      address_2: locationAddress2.value.trim(),
+      city: locationCity.value.trim(),
+      state: locationState.value.trim(),
+      zip: locationZip.value.trim(),
+      country: locationCountry.value.trim()
+    };
+  }
+
+  function clearLocationForm() {
+    locationName.value = "";
+    locationAddress1.value = "";
+    locationAddress2.value = "";
+    locationCity.value = "";
+    locationState.value = "";
+    locationZip.value = "";
+    locationCountry.value = "USA";
+  }
+
   function clearBatchForm() {
     batchId.value = "";
+    batchLocation.value = "";
     batchName.value = "";
     batchDay.value = "";
     batchTime.value = "";
@@ -350,6 +425,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <thead>
           <tr style="background:#f3f4f6;">
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Location</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Name</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Start Time</th>
@@ -362,6 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ${batches.map(batch => `
             <tr>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_id || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.location_name || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_name || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.day || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.time || ""}</td>
@@ -378,6 +455,17 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
 
     batchResults.dataset.batches = JSON.stringify(batches);
+  }
+
+  function populateLocationSelect(locations, selectedValue) {
+    batchLocation.innerHTML = '<option value="">Select location</option>';
+    for (const location of locations || []) {
+      const option = document.createElement("option");
+      option.value = location.location_id;
+      option.textContent = `${location.location_name} - ${location.city}, ${location.state}`;
+      batchLocation.appendChild(option);
+    }
+    if (selectedValue) batchLocation.value = selectedValue;
   }
 
   saveAdminKey.addEventListener("click", () => {
@@ -438,11 +526,17 @@ document.addEventListener("DOMContentLoaded", () => {
     adminStatus.textContent = "Loading batches...";
 
     try {
-      const response = await fetch(buildUrl("/admin/batches"));
-      const data = await response.json();
+      const [batchResponse, locationResponse] = await Promise.all([
+        fetch(buildUrl("/admin/batches")),
+        fetch(buildUrl("/admin/locations"))
+      ]);
+      const data = await batchResponse.json();
+      const locationData = await locationResponse.json();
       if (!data.success) throw new Error(data.error || "Could not load batches.");
+      if (!locationData.success) throw new Error(locationData.error || "Could not load locations.");
 
       adminStatus.textContent = "Batches loaded.";
+      populateLocationSelect(locationData.locations || [], batchLocation.value);
       renderBatches(data.batches || []);
     } catch (err) {
       adminStatus.textContent = err.message || "Could not load batches.";
@@ -452,12 +546,42 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("loadBatches").addEventListener("click", loadBatchList);
   document.getElementById("clearBatchForm").addEventListener("click", clearBatchForm);
 
+  document.getElementById("saveLocation").addEventListener("click", async () => {
+    if (!requireKey()) return;
+
+    const payload = buildLocationPayload();
+    if (!payload.location_name || !payload.address_1 || !payload.city || !payload.state || !payload.zip || !payload.country) {
+      adminStatus.textContent = "Location name, address 1, city, state, zip, and country are required.";
+      return;
+    }
+
+    adminStatus.textContent = "Creating location...";
+    try {
+      const response = await fetch(buildUrl("/admin/locations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not save location.");
+
+      adminStatus.textContent = "Location created.";
+      clearLocationForm();
+      await loadBatchList();
+      if (data.location?.location_id) {
+        batchLocation.value = data.location.location_id;
+      }
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not save location.";
+    }
+  });
+
   document.getElementById("saveBatch").addEventListener("click", async () => {
     if (!requireKey()) return;
 
     const payload = buildBatchPayload();
-    if (!payload.batch_name || !payload.day || !payload.time) {
-      adminStatus.textContent = "Batch name, day, and start time are required.";
+    if (!payload.location_id || !payload.batch_name || !payload.day || !payload.time) {
+      adminStatus.textContent = "Location, batch name, day, and start time are required.";
       return;
     }
 
@@ -491,6 +615,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!batch) return;
 
       batchId.value = batch.batch_id || "";
+      batchLocation.value = batch.location_id || "";
       batchName.value = batch.batch_name || "";
       batchDay.value = batch.day || "";
       batchTime.value = batch.time || "";

@@ -1,0 +1,209 @@
+{% assign is_coach = false %}
+{% if customer and customer.tags contains 'COACH' %}
+  {% assign is_coach = true %}
+{% endif %}
+{% if customer and customer.tags contains 'ADMIN' %}
+  {% assign is_coach = true %}
+{% endif %}
+{% if customer and customer.tags contains 'SUPERUSER' %}
+  {% assign is_coach = true %}
+{% endif %}
+
+{% if is_coach %}
+<section class="search-participant" style="max-width:1200px;margin:0 auto;padding:2rem;">
+  <h1 style="margin:0 0 1rem;">Search Participant</h1>
+
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+    <label for="coachKey" style="display:block;font-weight:600;margin-bottom:0.35rem;">Coach Key</label>
+    <input id="coachKey" type="password" autocomplete="off" style="width:100%;max-width:420px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="saveCoachKey" type="button" style="margin-left:0.5rem;padding:0.55rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Use Key</button>
+    <span id="coachKeyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;margin-bottom:1rem;">
+    <div>
+      <label for="participantName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Participant Name</label>
+      <input id="participantName" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="parentName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Parent Name</label>
+      <input id="parentName" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="cricclubId" style="display:block;font-weight:600;margin-bottom:0.35rem;">CricClub ID</label>
+      <input id="cricclubId" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="batchName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Batch Name</label>
+      <input id="batchName" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+  </div>
+
+  <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <button id="searchParticipants" type="button" style="padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#111;color:#fff;">Search</button>
+    <button id="clearSearch" type="button" style="padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">Clear</button>
+  </div>
+
+  <div id="coachStatus" style="font-weight:600;margin-bottom:1rem;"></div>
+  <div id="searchResults" style="overflow-x:auto;"></div>
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const proxyBase = "https://seal-proxy-secure.onrender.com";
+  const coachKey = document.getElementById("coachKey");
+  const saveCoachKey = document.getElementById("saveCoachKey");
+  const coachKeyStatus = document.getElementById("coachKeyStatus");
+  const coachStatus = document.getElementById("coachStatus");
+  const searchResults = document.getElementById("searchResults");
+  const participantName = document.getElementById("participantName");
+  const parentName = document.getElementById("parentName");
+  const cricclubId = document.getElementById("cricclubId");
+  const batchName = document.getElementById("batchName");
+
+  const savedKey = sessionStorage.getItem("sealCoachKey") || sessionStorage.getItem("sealAdminKey") || "";
+  if (savedKey) {
+    coachKey.value = savedKey;
+    coachKeyStatus.textContent = "Key loaded for this browser session.";
+  }
+
+  function getKey() {
+    return coachKey.value.trim();
+  }
+
+  function requireKey() {
+    if (!getKey()) {
+      coachStatus.textContent = "Enter the coach key first.";
+      return false;
+    }
+    return true;
+  }
+
+  function buildUrl(path, params = {}) {
+    const url = new URL(proxyBase + path);
+    url.searchParams.set("key", getKey());
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function assignmentTime(assignment) {
+    if (!assignment) return "";
+    return assignment.end_time ? `${assignment.time || ""}-${assignment.end_time}` : assignment.time || "";
+  }
+
+  function renderResults(participants) {
+    if (!participants.length) {
+      searchResults.innerHTML = "<p>No matching active participants found.</p>";
+      return;
+    }
+
+    searchResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant Name</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Parent Name</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Parent Phone Number</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">CricClub ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">DOB</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Program Level</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Day 1</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 1</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 1 Time</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Day 2</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 2</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 2 Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${participants.map(participant => {
+            const assignments = participant.current_assignments || [];
+            const day1 = assignments[0] || null;
+            const day2 = assignments[1] || null;
+            return `
+              <tr>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.participant_name)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.parent_name)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.parent_mobile)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.cricclub_id)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.dob)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(participant.program_level)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(day1?.batch_name)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(day1?.day)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(assignmentTime(day1))}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(day2?.batch_name)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(day2?.day)}</td>
+                <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(assignmentTime(day2))}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  saveCoachKey.addEventListener("click", () => {
+    if (!getKey()) {
+      coachKeyStatus.textContent = "Enter a key.";
+      return;
+    }
+    sessionStorage.setItem("sealCoachKey", getKey());
+    coachKeyStatus.textContent = "Key saved for this browser session.";
+  });
+
+  document.getElementById("clearSearch").addEventListener("click", () => {
+    participantName.value = "";
+    parentName.value = "";
+    cricclubId.value = "";
+    batchName.value = "";
+    coachStatus.textContent = "";
+    searchResults.innerHTML = "";
+  });
+
+  document.getElementById("searchParticipants").addEventListener("click", async () => {
+    if (!requireKey()) return;
+
+    const params = {
+      participant_name: participantName.value.trim(),
+      parent_name: parentName.value.trim(),
+      cricclub_id: cricclubId.value.trim(),
+      batch_name: batchName.value.trim()
+    };
+
+    if (!params.participant_name && !params.parent_name && !params.cricclub_id && !params.batch_name) {
+      coachStatus.textContent = "Enter at least one search parameter.";
+      return;
+    }
+
+    coachStatus.textContent = "Searching participants...";
+    try {
+      const response = await fetch(buildUrl("/coach/participants/details-search", params));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not search participants.");
+
+      coachStatus.textContent = `Found ${data.participants?.length || 0} participant(s).`;
+      renderResults(data.participants || []);
+    } catch (err) {
+      coachStatus.textContent = err.message || "Could not search participants.";
+    }
+  });
+});
+</script>
+{% else %}
+<section style="max-width:760px;margin:0 auto;padding:2rem;">
+  <h1>Access denied</h1>
+  <p>You do not have permission to view this page.</p>
+</section>
+{% endif %}

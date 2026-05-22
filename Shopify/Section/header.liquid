@@ -267,7 +267,7 @@
         {% if show_coaches_corner %}
           {% assign coaches_child_list_handle = 'coaches-corner-mobile' %}
           <li class="mobile-nav__item border-bottom">
-            <button type="button" class="btn--link js-toggle-submenu mobile-nav__link{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' %} mobile-nav__link--active{% endif %}" data-target="{{ coaches_child_list_handle }}" data-level="1" aria-expanded="false">
+            <button type="button" class="btn--link js-toggle-submenu mobile-nav__link{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' %} mobile-nav__link--active{% endif %}" data-target="{{ coaches_child_list_handle }}" data-level="1" aria-expanded="false">
               <span class="mobile-nav__label">Coaches Corner</span>
               <div class="mobile-nav__icon">
                 {% include 'icon-chevron-right' %}
@@ -297,12 +297,20 @@
                   <span class="mobile-nav__label">Assign Batch</span>
                 </a>
               </li>
-              <li class="mobile-nav__item">
+              <li class="mobile-nav__item border-bottom">
                 <a href="/pages/search-modify-batch"
                   class="mobile-nav__sublist-link{% if page.handle == 'search-modify-batch' %} mobile-nav__link--active{% endif %}"
                   {% if page.handle == 'search-modify-batch' %} aria-current="page"{% endif %}
                 >
                   <span class="mobile-nav__label">Search &amp; Modify Batch</span>
+                </a>
+              </li>
+              <li class="mobile-nav__item">
+                <a href="/pages/search-participant"
+                  class="mobile-nav__sublist-link{% if page.handle == 'search-participant' %} mobile-nav__link--active{% endif %}"
+                  {% if page.handle == 'search-participant' %} aria-current="page"{% endif %}
+                >
+                  <span class="mobile-nav__label">Search Participant</span>
                 </a>
               </li>
             </ul>
