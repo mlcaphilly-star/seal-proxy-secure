@@ -20,10 +20,24 @@
     <span id="coachKeyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
   </div>
 
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;margin-bottom:1rem;">
+    <div>
+      <label for="assignParticipantName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Participant Name</label>
+      <input id="assignParticipantName" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="assignCricclubId" style="display:block;font-weight:600;margin-bottom:0.35rem;">CricClub ID</label>
+      <input id="assignCricclubId" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="assignFromDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">As Of / From Date</label>
+      <input id="assignFromDate" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+  </div>
+
   <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
     <button id="loadUnassigned" type="button" style="padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#111;color:#fff;">Load Unassigned</button>
-    <label for="assignFromDate" style="font-weight:600;align-self:center;">From</label>
-    <input id="assignFromDate" type="date" style="padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="clearAssignSearch" type="button" style="padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">Clear</button>
   </div>
 
   <div id="coachStatus" style="font-weight:600;margin-bottom:1rem;"></div>
@@ -38,6 +52,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const coachKeyStatus = document.getElementById("coachKeyStatus");
   const coachStatus = document.getElementById("coachStatus");
   const assignFromDate = document.getElementById("assignFromDate");
+  const assignParticipantName = document.getElementById("assignParticipantName");
+  const assignCricclubId = document.getElementById("assignCricclubId");
   const unassignedResults = document.getElementById("unassignedResults");
   let batches = [];
   let participants = [];
@@ -150,6 +166,14 @@ document.addEventListener("DOMContentLoaded", () => {
     coachKeyStatus.textContent = "Key saved for this browser session.";
   });
 
+  document.getElementById("clearAssignSearch").addEventListener("click", () => {
+    assignParticipantName.value = "";
+    assignCricclubId.value = "";
+    assignFromDate.value = new Date().toISOString().slice(0, 10);
+    coachStatus.textContent = "";
+    unassignedResults.innerHTML = "";
+  });
+
   document.getElementById("loadUnassigned").addEventListener("click", async () => {
     try {
       if (!requireKey()) return;
@@ -159,11 +183,15 @@ document.addEventListener("DOMContentLoaded", () => {
         coachStatus.textContent = "No batches found. Add batches to the Batches table first.";
         return;
       }
-      const response = await fetch(buildUrl("/coach/unassigned-participants"));
+      const response = await fetch(buildUrl("/coach/unassigned-participants", {
+        as_of_date: assignFromDate.value,
+        participant_name: assignParticipantName.value.trim(),
+        cricclub_id: assignCricclubId.value.trim()
+      }));
       const data = await response.json();
       if (!data.success) throw new Error(data.error || "Could not load participants.");
       participants = data.participants || [];
-      coachStatus.textContent = "Unassigned participants loaded.";
+      coachStatus.textContent = `Unassigned participants loaded as of ${data.as_of_date || assignFromDate.value}.`;
       renderParticipants();
     } catch (err) {
       coachStatus.textContent = err.message || "Could not load unassigned participants.";

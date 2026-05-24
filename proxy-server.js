@@ -418,10 +418,10 @@ async function fetchActiveParticipants() {
   return participants;
 }
 
-async function getCurrentBatchAssignments(subscriptionIds = []) {
+async function getCurrentBatchAssignments(subscriptionIds = [], asOfDate = null) {
   if (!subscriptionIds.length) return new Map();
 
-  const today = getDateStringInTimeZone(new Date());
+  const effectiveDate = asOfDate || getDateStringInTimeZone(new Date());
   const sql = `
     SELECT
       ba.batch_id,
@@ -449,7 +449,7 @@ async function getCurrentBatchAssignments(subscriptionIds = []) {
       AND (ba.to_date IS NULL OR ba.to_date >= $2::date)
     ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC
   `;
-  const { rows } = await pool.query(sql, [subscriptionIds, today]);
+  const { rows } = await pool.query(sql, [subscriptionIds, effectiveDate]);
   const assignmentMap = new Map();
 
   for (const row of rows) {
@@ -1150,12 +1150,24 @@ app.get('/coach/batches', async (req, res) => {
 app.get('/coach/unassigned-participants', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
+  const asOfDate = String(req.query.as_of_date || getDateStringInTimeZone(new Date())).trim();
+  const participantName = String(req.query.participant_name || '').trim().toLowerCase();
+  const cricclubId = String(req.query.cricclub_id || '').trim().toLowerCase();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+    return res.status(400).json({ success: false, error: 'As-of date must use YYYY-MM-DD format.' });
+  }
+
   try {
-    const participants = await fetchActiveParticipants();
-    const assignmentMap = await getCurrentBatchAssignments(participants.map(p => p.subscription_id));
+    const participants = (await fetchActiveParticipants()).filter(participant => {
+      const participantMatches = !participantName || String(participant.participant_name || '').toLowerCase().includes(participantName);
+      const cricclubMatches = !cricclubId || String(participant.cricclub_id || '').toLowerCase().includes(cricclubId);
+      return participantMatches && cricclubMatches;
+    });
+    const assignmentMap = await getCurrentBatchAssignments(participants.map(p => p.subscription_id), asOfDate);
     const unassigned = participants.filter(p => !assignmentMap.has(p.subscription_id));
 
-    return res.json({ success: true, participants: unassigned });
+    return res.json({ success: true, as_of_date: asOfDate, participants: unassigned });
   } catch (err) {
     console.error('Coach unassigned participants error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load unassigned participants.' });
