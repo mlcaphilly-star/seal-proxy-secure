@@ -1256,8 +1256,9 @@ app.get('/coach/participants/details-search', async (req, res) => {
 app.get('/coach/vacation-report', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
-  const fromDate = String(req.query.from_date || '').trim();
-  const toDate = String(req.query.to_date || '').trim();
+  const today = getDateStringInTimeZone(new Date());
+  const fromDate = String(req.query.from_date || today).trim();
+  const toDate = String(req.query.to_date || fromDate).trim();
 
   if ((fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) || (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate))) {
     return res.status(400).json({ success: false, error: 'Dates must use YYYY-MM-DD format.' });

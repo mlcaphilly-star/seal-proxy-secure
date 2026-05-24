@@ -17,10 +17,27 @@
       {% if customer and customer.tags contains 'SUPERUSER' %}
         {% assign show_link = true %}
       {% endif %}
+      {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+        {% assign show_link = true %}
+      {% endif %}
     {% endif %}
     {% if link.title == 'Parents Corner' or link.title == 'Parent Corner' %}
-      {% if customer and customer.tags contains 'COACH' %}
+      {% assign show_link = false %}
+      {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+        {% assign show_link = true %}
+      {% elsif customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
         {% assign show_link = false %}
+      {% elsif customer %}
+        {% assign show_link = true %}
+      {% endif %}
+    {% endif %}
+    {% if link.title == 'Coaches Corner' or link.title == 'Coach Corner' or link.title == 'Coaches Coner' or link.title == 'Coaches Coener' %}
+      {% assign show_link = false %}
+      {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+        {% assign show_link = true %}
+      {% endif %}
+      {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+        {% assign show_link = true %}
       {% endif %}
     {% endif %}
     {% if show_link %}
@@ -105,15 +122,15 @@
     {% endif %}
   {% endfor %}
   {% assign show_coaches_corner = false %}
-  {% if customer and customer.tags contains 'COACH' %}
+  {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
     {% assign show_coaches_corner = true %}
   {% endif %}
-  {% if customer and customer.tags contains 'ADMIN' %}
+  {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
     {% assign show_coaches_corner = true %}
   {% endif %}
   {% if show_coaches_corner %}
-    <li class="site-nav--has-dropdown{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' %} site-nav--active{% endif %}" data-has-dropdowns>
-      <button class="site-nav__link site-nav__link--main site-nav__link--button{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' %} site-nav__link--active{% endif %}" type="button" aria-expanded="false" aria-controls="SiteNavLabel-coaches-corner">
+    <li class="site-nav--has-dropdown{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' or page.handle == 'vacation-report' %} site-nav--active{% endif %}" data-has-dropdowns>
+      <button class="site-nav__link site-nav__link--main site-nav__link--button{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' or page.handle == 'vacation-report' %} site-nav__link--active{% endif %}" type="button" aria-expanded="false" aria-controls="SiteNavLabel-coaches-corner">
         <span class="site-nav__label">Coaches Corner</span>{% include 'icon-chevron-down' %}
       </button>
 
@@ -137,10 +154,18 @@
           </li>
           <li>
             <a href="/pages/search-participant"
-              class="site-nav__link site-nav__child-link site-nav__link--last{% if page.handle == 'search-participant' %} site-nav__link--active{% endif %}"
+              class="site-nav__link site-nav__child-link{% if page.handle == 'search-participant' %} site-nav__link--active{% endif %}"
               {% if page.handle == 'search-participant' %} aria-current="page"{% endif %}
             >
               <span class="site-nav__label">Search Participant</span>
+            </a>
+          </li>
+          <li>
+            <a href="/pages/vacation-report"
+              class="site-nav__link site-nav__child-link site-nav__link--last{% if page.handle == 'vacation-report' %} site-nav__link--active{% endif %}"
+              {% if page.handle == 'vacation-report' %} aria-current="page"{% endif %}
+            >
+              <span class="site-nav__label">Vacation Report</span>
             </a>
           </li>
         </ul>

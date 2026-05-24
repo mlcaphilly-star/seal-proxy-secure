@@ -161,10 +161,27 @@
             {% if customer and customer.tags contains 'SUPERUSER' %}
               {% assign show_link = true %}
             {% endif %}
+            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+              {% assign show_link = true %}
+            {% endif %}
           {% endif %}
           {% if link.title == 'Parents Corner' or link.title == 'Parent Corner' %}
-            {% if customer and customer.tags contains 'COACH' %}
+            {% assign show_link = false %}
+            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+              {% assign show_link = true %}
+            {% elsif customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
               {% assign show_link = false %}
+            {% elsif customer %}
+              {% assign show_link = true %}
+            {% endif %}
+          {% endif %}
+          {% if link.title == 'Coaches Corner' or link.title == 'Coach Corner' or link.title == 'Coaches Coner' or link.title == 'Coaches Coener' %}
+            {% assign show_link = false %}
+            {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+              {% assign show_link = true %}
+            {% endif %}
+            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+              {% assign show_link = true %}
             {% endif %}
           {% endif %}
 
@@ -258,16 +275,16 @@
           {% endif %}
         {% endfor %}
         {% assign show_coaches_corner = false %}
-        {% if customer and customer.tags contains 'COACH' %}
+        {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
           {% assign show_coaches_corner = true %}
         {% endif %}
-        {% if customer and customer.tags contains 'ADMIN' %}
+        {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
           {% assign show_coaches_corner = true %}
         {% endif %}
         {% if show_coaches_corner %}
           {% assign coaches_child_list_handle = 'coaches-corner-mobile' %}
           <li class="mobile-nav__item border-bottom">
-            <button type="button" class="btn--link js-toggle-submenu mobile-nav__link{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' %} mobile-nav__link--active{% endif %}" data-target="{{ coaches_child_list_handle }}" data-level="1" aria-expanded="false">
+            <button type="button" class="btn--link js-toggle-submenu mobile-nav__link{% if page.handle == 'assign-batch' or page.handle == 'search-modify-batch' or page.handle == 'search-participant' or page.handle == 'vacation-report' %} mobile-nav__link--active{% endif %}" data-target="{{ coaches_child_list_handle }}" data-level="1" aria-expanded="false">
               <span class="mobile-nav__label">Coaches Corner</span>
               <div class="mobile-nav__icon">
                 {% include 'icon-chevron-right' %}
@@ -305,12 +322,20 @@
                   <span class="mobile-nav__label">Search &amp; Modify Batch</span>
                 </a>
               </li>
-              <li class="mobile-nav__item">
+              <li class="mobile-nav__item border-bottom">
                 <a href="/pages/search-participant"
                   class="mobile-nav__sublist-link{% if page.handle == 'search-participant' %} mobile-nav__link--active{% endif %}"
                   {% if page.handle == 'search-participant' %} aria-current="page"{% endif %}
                 >
                   <span class="mobile-nav__label">Search Participant</span>
+                </a>
+              </li>
+              <li class="mobile-nav__item">
+                <a href="/pages/vacation-report"
+                  class="mobile-nav__sublist-link{% if page.handle == 'vacation-report' %} mobile-nav__link--active{% endif %}"
+                  {% if page.handle == 'vacation-report' %} aria-current="page"{% endif %}
+                >
+                  <span class="mobile-nav__label">Vacation Report</span>
                 </a>
               </li>
             </ul>

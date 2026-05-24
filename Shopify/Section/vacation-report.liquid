@@ -1,0 +1,174 @@
+{% assign is_coach = false %}
+{% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+  {% assign is_coach = true %}
+{% endif %}
+{% if customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+  {% assign is_coach = true %}
+{% endif %}
+{% if customer and customer.tags contains 'SUPERUSER' %}
+  {% assign is_coach = true %}
+{% endif %}
+
+{% if is_coach %}
+<section class="vacation-report" style="max-width:1200px;margin:0 auto;padding:2rem;">
+  <h1 style="margin:0 0 1rem;">Vacation Report</h1>
+
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+    <label for="coachKey" style="display:block;font-weight:600;margin-bottom:0.35rem;">Coach Key</label>
+    <input id="coachKey" type="password" autocomplete="off" style="width:100%;max-width:420px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    <button id="saveCoachKey" type="button" style="margin-left:0.5rem;padding:0.55rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Use Key</button>
+    <span id="coachKeyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
+  </div>
+
+  <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <div>
+      <label for="fromDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">From Date</label>
+      <input id="fromDate" type="date" style="padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <div>
+      <label for="toDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">To Date</label>
+      <input id="toDate" type="date" style="padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+    </div>
+    <button id="loadVacationReport" type="button" style="align-self:end;padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#111;color:#fff;">Load Report</button>
+    <button id="clearVacationReport" type="button" style="align-self:end;padding:0.6rem 0.85rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">Clear</button>
+  </div>
+
+  <div id="coachStatus" style="font-weight:600;margin-bottom:1rem;"></div>
+  <div id="reportResults" style="overflow-x:auto;"></div>
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const proxyBase = "https://seal-proxy-secure.onrender.com";
+  const coachKey = document.getElementById("coachKey");
+  const saveCoachKey = document.getElementById("saveCoachKey");
+  const coachKeyStatus = document.getElementById("coachKeyStatus");
+  const coachStatus = document.getElementById("coachStatus");
+  const reportResults = document.getElementById("reportResults");
+  const fromDate = document.getElementById("fromDate");
+  const toDate = document.getElementById("toDate");
+
+  const savedKey = sessionStorage.getItem("sealCoachKey") || sessionStorage.getItem("sealAdminKey") || "";
+  if (savedKey) {
+    coachKey.value = savedKey;
+    coachKeyStatus.textContent = "Key loaded for this browser session.";
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  fromDate.value = today;
+  toDate.value = today;
+
+  function getKey() {
+    return coachKey.value.trim();
+  }
+
+  function requireKey() {
+    if (!getKey()) {
+      coachStatus.textContent = "Enter the coach key first.";
+      return false;
+    }
+    return true;
+  }
+
+  function buildUrl(path, params = {}) {
+    const url = new URL(proxyBase + path);
+    url.searchParams.set("key", getKey());
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function renderReport(vacations) {
+    if (!vacations.length) {
+      reportResults.innerHTML = "<p>No vacation requests found.</p>";
+      return;
+    }
+
+    reportResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Parent</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Parent Phone</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">CricClub ID</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Program Level</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Product</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">From</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">To</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Days</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vacations.map(row => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.participant_name)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.parent_name)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.parent_mobile)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.cricclub_id)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.program_level)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.product_title)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.from_date)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.to_date)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.shift_days)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(row.reason)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  saveCoachKey.addEventListener("click", () => {
+    if (!getKey()) {
+      coachKeyStatus.textContent = "Enter a key.";
+      return;
+    }
+    sessionStorage.setItem("sealCoachKey", getKey());
+    coachKeyStatus.textContent = "Key saved for this browser session.";
+  });
+
+  document.getElementById("clearVacationReport").addEventListener("click", () => {
+    fromDate.value = today;
+    toDate.value = today;
+    coachStatus.textContent = "";
+    reportResults.innerHTML = "";
+  });
+
+  document.getElementById("loadVacationReport").addEventListener("click", async () => {
+    if (!requireKey()) return;
+    coachStatus.textContent = "Loading vacation report...";
+
+    try {
+      const response = await fetch(buildUrl("/coach/vacation-report", {
+        from_date: fromDate.value,
+        to_date: toDate.value
+      }));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load vacation report.");
+
+      coachStatus.textContent = `Found ${data.count || 0} vacation request(s).`;
+      renderReport(data.vacations || []);
+    } catch (err) {
+      coachStatus.textContent = err.message || "Could not load vacation report.";
+    }
+  });
+});
+</script>
+{% else %}
+<section style="max-width:760px;margin:0 auto;padding:2rem;">
+  <h1>Access denied</h1>
+  <p>You do not have permission to view this page.</p>
+</section>
+{% endif %}

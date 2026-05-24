@@ -1,4 +1,12 @@
+{% assign is_admin = false %}
 {% if customer and customer.tags contains 'SUPERUSER' %}
+  {% assign is_admin = true %}
+{% endif %}
+{% if customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+  {% assign is_admin = true %}
+{% endif %}
+
+{% if is_admin %}
 <section class="admin-tools" style="max-width:1100px;margin:0 auto;padding:2rem;">
   <h1 style="margin-bottom:1rem;">Admin Tools</h1>
 

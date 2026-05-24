@@ -1,8 +1,8 @@
 {% assign is_coach = false %}
-{% if customer and customer.tags contains 'COACH' %}
+{% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
   {% assign is_coach = true %}
 {% endif %}
-{% if customer and customer.tags contains 'ADMIN' %}
+{% if customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
   {% assign is_coach = true %}
 {% endif %}
 {% if customer and customer.tags contains 'SUPERUSER' %}
