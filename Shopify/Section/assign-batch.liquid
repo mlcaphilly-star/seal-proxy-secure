@@ -29,10 +29,6 @@
       <label for="assignCricclubId" style="display:block;font-weight:600;margin-bottom:0.35rem;">CricClub ID</label>
       <input id="assignCricclubId" type="search" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
     </div>
-    <div>
-      <label for="assignFromDate" style="display:block;font-weight:600;margin-bottom:0.35rem;">As Of / From Date</label>
-      <input id="assignFromDate" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
-    </div>
   </div>
 
   <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
@@ -51,7 +47,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const saveCoachKey = document.getElementById("saveCoachKey");
   const coachKeyStatus = document.getElementById("coachKeyStatus");
   const coachStatus = document.getElementById("coachStatus");
-  const assignFromDate = document.getElementById("assignFromDate");
   const assignParticipantName = document.getElementById("assignParticipantName");
   const assignCricclubId = document.getElementById("assignCricclubId");
   const unassignedResults = document.getElementById("unassignedResults");
@@ -63,7 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
     coachKey.value = savedKey;
     coachKeyStatus.textContent = "Key loaded for this browser session.";
   }
-  assignFromDate.value = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
   function getKey() {
     return coachKey.value.trim();
@@ -169,7 +164,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("clearAssignSearch").addEventListener("click", () => {
     assignParticipantName.value = "";
     assignCricclubId.value = "";
-    assignFromDate.value = new Date().toISOString().slice(0, 10);
     coachStatus.textContent = "";
     unassignedResults.innerHTML = "";
   });
@@ -184,14 +178,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const response = await fetch(buildUrl("/coach/unassigned-participants", {
-        as_of_date: assignFromDate.value,
+        as_of_date: today,
         participant_name: assignParticipantName.value.trim(),
         cricclub_id: assignCricclubId.value.trim()
       }));
       const data = await response.json();
       if (!data.success) throw new Error(data.error || "Could not load participants.");
       participants = data.participants || [];
-      coachStatus.textContent = `Unassigned participants loaded as of ${data.as_of_date || assignFromDate.value}.`;
+      coachStatus.textContent = `Unassigned participants loaded as of ${data.as_of_date || today}.`;
       renderParticipants();
     } catch (err) {
       coachStatus.textContent = err.message || "Could not load unassigned participants.";
@@ -217,7 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
           key: getKey(),
           subscription_id: participants[index].subscription_id,
           batch_ids: batchIds,
-          from_date: assignFromDate.value
+          from_date: today
         })
       });
       const data = await response.json();

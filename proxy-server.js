@@ -39,6 +39,9 @@ const getDateStringInTimeZone = (date, timeZone = 'America/New_York') => {
 const normalizeProductName = (value = '') =>
   String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
 
+const normalizeSearchText = (value = '') =>
+  String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+
 const findSubscriptionItemByProduct = (subscription, normalizedProductName) =>
   (subscription.items || []).find(item =>
     normalizeProductName(item.title || '') === normalizedProductName
@@ -447,7 +450,20 @@ async function getCurrentBatchAssignments(subscriptionIds = [], asOfDate = null)
     WHERE ba.subscription_id = ANY($1::text[])
       AND ba.from_date <= $2::date
       AND (ba.to_date IS NULL OR ba.to_date >= $2::date)
-    ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC
+    ORDER BY
+      l.location_name ASC,
+      CASE b.day
+        WHEN 'Monday' THEN 1
+        WHEN 'Tuesday' THEN 2
+        WHEN 'Wednesday' THEN 3
+        WHEN 'Thursday' THEN 4
+        WHEN 'Friday' THEN 5
+        WHEN 'Saturday' THEN 6
+        WHEN 'Sunday' THEN 7
+        ELSE 8
+      END,
+      b.time ASC,
+      b.batch_name ASC
   `;
   const { rows } = await pool.query(sql, [subscriptionIds, effectiveDate]);
   const assignmentMap = new Map();
@@ -1007,7 +1023,20 @@ app.get('/admin/batches', async (req, res) => {
          l.location_name
        FROM batches b
        LEFT JOIN locations l ON l.location_id = b.location_id
-       ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC`
+       ORDER BY
+         l.location_name ASC,
+         CASE b.day
+           WHEN 'Monday' THEN 1
+           WHEN 'Tuesday' THEN 2
+           WHEN 'Wednesday' THEN 3
+           WHEN 'Thursday' THEN 4
+           WHEN 'Friday' THEN 5
+           WHEN 'Saturday' THEN 6
+           WHEN 'Sunday' THEN 7
+           ELSE 8
+         END,
+         b.time ASC,
+         b.batch_name ASC`
     );
     return res.json({ success: true, batches: rows });
   } catch (err) {
@@ -1138,7 +1167,20 @@ app.get('/coach/batches', async (req, res) => {
          l.location_name
        FROM batches b
        LEFT JOIN locations l ON l.location_id = b.location_id
-       ORDER BY l.location_name ASC, b.day ASC, b.time ASC, b.batch_name ASC`
+       ORDER BY
+         l.location_name ASC,
+         CASE b.day
+           WHEN 'Monday' THEN 1
+           WHEN 'Tuesday' THEN 2
+           WHEN 'Wednesday' THEN 3
+           WHEN 'Thursday' THEN 4
+           WHEN 'Friday' THEN 5
+           WHEN 'Saturday' THEN 6
+           WHEN 'Sunday' THEN 7
+           ELSE 8
+         END,
+         b.time ASC,
+         b.batch_name ASC`
     );
     return res.json({ success: true, batches: rows });
   } catch (err) {
@@ -1151,8 +1193,8 @@ app.get('/coach/unassigned-participants', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
   const asOfDate = String(req.query.as_of_date || getDateStringInTimeZone(new Date())).trim();
-  const participantName = String(req.query.participant_name || '').trim().toLowerCase();
-  const cricclubId = String(req.query.cricclub_id || '').trim().toLowerCase();
+  const participantName = normalizeSearchText(req.query.participant_name || '');
+  const cricclubId = normalizeSearchText(req.query.cricclub_id || '');
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
     return res.status(400).json({ success: false, error: 'As-of date must use YYYY-MM-DD format.' });
@@ -1160,8 +1202,8 @@ app.get('/coach/unassigned-participants', async (req, res) => {
 
   try {
     const participants = (await fetchActiveParticipants()).filter(participant => {
-      const participantMatches = !participantName || String(participant.participant_name || '').toLowerCase().includes(participantName);
-      const cricclubMatches = !cricclubId || String(participant.cricclub_id || '').toLowerCase().includes(cricclubId);
+      const participantMatches = !participantName || normalizeSearchText(participant.participant_name || '').includes(participantName);
+      const cricclubMatches = !cricclubId || normalizeSearchText(participant.cricclub_id || '').includes(cricclubId);
       return participantMatches && cricclubMatches;
     });
     const assignmentMap = await getCurrentBatchAssignments(participants.map(p => p.subscription_id), asOfDate);

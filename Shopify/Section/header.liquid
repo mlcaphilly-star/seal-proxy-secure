@@ -152,24 +152,32 @@
 
     <nav class="mobile-nav-wrapper medium-up--hide critical-hidden" role="navigation">
       <ul id="MobileNav" class="mobile-nav">
+        {% assign is_coach_customer = false %}
+        {% assign is_admin_customer = false %}
+        {% if customer %}
+          {% if customer.tags contains 'COACH' or customer.tags contains 'Coach' or customer.tags contains 'coach' %}
+            {% assign is_coach_customer = true %}
+          {% endif %}
+          {% if customer.tags contains 'SUPERUSER' or customer.tags contains 'ADMIN' or customer.tags contains 'Admin' or customer.tags contains 'admin' %}
+            {% assign is_admin_customer = true %}
+          {% endif %}
+        {% endif %}
+
         {% for link in linklists[section.settings.main_linklist].links %}
           {%- assign outerLoopIndex = forloop.index -%}
           {% comment %}2026-05-20: Hide Admin navigation from non-SUPERUSER customers in the mobile menu.{% endcomment %}
           {% assign show_link = true %}
           {% if link.title == 'Admin' %}
             {% assign show_link = false %}
-            {% if customer and customer.tags contains 'SUPERUSER' %}
-              {% assign show_link = true %}
-            {% endif %}
-            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+            {% if is_admin_customer %}
               {% assign show_link = true %}
             {% endif %}
           {% endif %}
           {% if link.title == 'Parents Corner' or link.title == 'Parent Corner' %}
             {% assign show_link = false %}
-            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+            {% if is_admin_customer %}
               {% assign show_link = true %}
-            {% elsif customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+            {% elsif is_coach_customer %}
               {% assign show_link = false %}
             {% elsif customer %}
               {% assign show_link = true %}
@@ -177,10 +185,10 @@
           {% endif %}
           {% if link.title == 'Coaches Corner' or link.title == 'Coach Corner' or link.title == 'Coaches Coner' or link.title == 'Coaches Coener' %}
             {% assign show_link = false %}
-            {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+            {% if is_coach_customer %}
               {% assign show_link = true %}
             {% endif %}
-            {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+            {% if is_admin_customer %}
               {% assign show_link = true %}
             {% endif %}
           {% endif %}
@@ -275,10 +283,10 @@
           {% endif %}
         {% endfor %}
         {% assign show_coaches_corner = false %}
-        {% if customer and customer.tags contains 'COACH' or customer and customer.tags contains 'Coach' or customer and customer.tags contains 'coach' %}
+        {% if is_coach_customer %}
           {% assign show_coaches_corner = true %}
         {% endif %}
-        {% if customer and customer.tags contains 'SUPERUSER' or customer and customer.tags contains 'ADMIN' or customer and customer.tags contains 'Admin' or customer and customer.tags contains 'admin' %}
+        {% if is_admin_customer %}
           {% assign show_coaches_corner = true %}
         {% endif %}
         {% if show_coaches_corner %}
