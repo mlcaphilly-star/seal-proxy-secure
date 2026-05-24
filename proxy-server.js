@@ -1253,6 +1253,75 @@ app.get('/coach/participants/details-search', async (req, res) => {
   }
 });
 
+app.get('/coach/vacation-report', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const fromDate = String(req.query.from_date || '').trim();
+  const toDate = String(req.query.to_date || '').trim();
+
+  if ((fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) || (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate))) {
+    return res.status(400).json({ success: false, error: 'Dates must use YYYY-MM-DD format.' });
+  }
+
+  if (fromDate && toDate && toDate < fromDate) {
+    return res.status(400).json({ success: false, error: 'To date must be after or equal to from date.' });
+  }
+
+  try {
+    const params = [];
+    const where = [];
+
+    if (fromDate) {
+      params.push(fromDate);
+      where.push(`vr.to_date >= $${params.length}::date`);
+    }
+
+    if (toDate) {
+      params.push(toDate);
+      where.push(`vr.from_date <= $${params.length}::date`);
+    }
+
+    const sql = `
+      SELECT
+        vr.id,
+        vr.customer_id,
+        vr.child_name,
+        vr.from_date::text,
+        vr.to_date::text,
+        vr.shift_days,
+        vr.reason,
+        vr.subscription_id,
+        vr.billing_attempt_id
+      FROM vacation_requests vr
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY vr.from_date DESC, vr.to_date DESC, vr.child_name ASC
+    `;
+    const { rows } = await pool.query(sql, params);
+    const participants = await fetchActiveParticipants();
+    const participantMap = new Map(participants.map(participant => [participant.subscription_id, participant]));
+
+    return res.json({
+      success: true,
+      count: rows.length,
+      vacations: rows.map(row => {
+        const participant = participantMap.get(String(row.subscription_id)) || {};
+        return {
+          ...row,
+          participant_name: participant.participant_name || row.child_name || '',
+          parent_name: participant.parent_name || '',
+          parent_mobile: participant.parent_mobile || '',
+          cricclub_id: participant.cricclub_id || '',
+          program_level: participant.program_level || '',
+          product_title: participant.product_title || ''
+        };
+      })
+    });
+  } catch (err) {
+    console.error('Coach vacation report error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load vacation report.' });
+  }
+});
+
 app.post('/coach/batch-assignments', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
