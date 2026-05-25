@@ -1401,6 +1401,115 @@ app.put('/coach/batch-assignments', async (req, res) => {
   }
 });
 
+app.post('/coach/batch-assignments/bulk', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const assignments = Array.isArray(req.body.assignments) ? req.body.assignments : [];
+  const fromDate = req.body.from_date || getDateStringInTimeZone(new Date());
+  const replaceExisting = req.body.replace_existing === true;
+  const dryRun = req.body.dry_run === true;
+
+  if (!assignments.length) {
+    return res.status(400).json({ success: false, error: 'Assignments are required.' });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    return res.status(400).json({ success: false, error: 'From date must use YYYY-MM-DD format.' });
+  }
+
+  try {
+    const [participants, batchResult] = await Promise.all([
+      fetchActiveParticipants(),
+      pool.query('SELECT batch_id, batch_name FROM batches')
+    ]);
+    const batchMap = new Map();
+
+    for (const batch of batchResult.rows) {
+      const normalizedBatchName = normalizeProductName(batch.batch_name || '');
+      if (!batchMap.has(normalizedBatchName)) batchMap.set(normalizedBatchName, []);
+      batchMap.get(normalizedBatchName).push(batch);
+    }
+
+    const results = [];
+    let assignedCount = 0;
+    let failedCount = 0;
+
+    for (const assignment of assignments) {
+      const participantName = String(assignment.participant_name || '').trim();
+      const productTitle = String(assignment.product_title || '').trim();
+      const batchNames = [
+        assignment.day1_batch || assignment.batch_day_1 || assignment.batch_1,
+        assignment.day2_batch || assignment.batch_day_2 || assignment.batch_2
+      ].filter(Boolean).map(value => String(value).trim());
+
+      const result = {
+        participant_name: participantName,
+        product_title: productTitle,
+        batch_names: batchNames,
+        status: dryRun ? 'preview' : 'assigned'
+      };
+
+      try {
+        if (!participantName) throw new Error('Participant name is required.');
+        if (!batchNames.length) throw new Error('At least one batch is required.');
+
+        const participantMatches = participants.filter(participant =>
+          normalizeSearchText(participant.participant_name || '') === normalizeSearchText(participantName)
+        );
+        const productMatches = productTitle
+          ? participantMatches.filter(participant =>
+              normalizeProductName(participant.product_title || '') === normalizeProductName(productTitle)
+            )
+          : participantMatches;
+
+        if (!productMatches.length) throw new Error('No active participant subscription matched.');
+        if (productMatches.length > 1) throw new Error('Multiple active participant subscriptions matched.');
+
+        const batchIds = [];
+        for (const batchName of batchNames) {
+          const matches = batchMap.get(normalizeProductName(batchName)) || [];
+          if (!matches.length) throw new Error(`Batch not found: ${batchName}`);
+          if (matches.length > 1) throw new Error(`Multiple batches matched: ${batchName}`);
+          batchIds.push(matches[0].batch_id);
+        }
+
+        result.subscription_id = productMatches[0].subscription_id;
+        result.batch_ids = batchIds;
+
+        if (!dryRun) {
+          await saveBatchAssignments({
+            subscriptionId: productMatches[0].subscription_id,
+            batchIds,
+            fromDate,
+            closeExisting: replaceExisting
+          });
+        }
+
+        assignedCount += 1;
+      } catch (err) {
+        result.status = 'failed';
+        result.error = err.message || 'Failed to assign batches.';
+        failedCount += 1;
+      }
+
+      results.push(result);
+    }
+
+    return res.json({
+      success: true,
+      dry_run: dryRun,
+      from_date: fromDate,
+      replace_existing: replaceExisting,
+      assigned_count: assignedCount,
+      failed_count: failedCount,
+      results
+    });
+  } catch (err) {
+    console.error('Coach bulk batch assignment error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to process bulk batch assignments.' });
+  }
+});
+
 // -------------------- Admin Bulk Holiday/Coaching Credit --------------------
 app.post('/admin/bulk-credit', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
