@@ -1766,6 +1766,11 @@ app.get('/enrollments', async (req, res) => {
       }
     }
 
+    const assignmentMap = await getCurrentBatchAssignments(enrollments.map(enrollment => String(enrollment.subscription_id)));
+    for (const enrollment of enrollments) {
+      enrollment.current_assignments = assignmentMap.get(String(enrollment.subscription_id)) || [];
+    }
+
     // 2026-04-25: Sort active enrollments by child name for consistent dropdown ordering.
     enrollments.sort((a, b) => {
       const nameA = `${a.child_first_name || ''} ${a.child_last_name || ''}`.trim();
