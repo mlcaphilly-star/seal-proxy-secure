@@ -618,7 +618,19 @@ app.get('/admin/seal-report', async (req, res) => {
       page++;
     }
 
-    let csv = `Subscription ID,Product,Parent First Name,Parent Last Name,Parent Mobile,Parent Email,City,State,Zip,Child First Name,Child Last Name,Child DOB,CricClubID, Program Level,Billing Interval,Next Billing Date\n`;
+    const header = [
+      'Subscription ID',
+      'Product',
+      'Participant Name',
+      'Parent Name',
+      'Parent Mobile',
+      'Parent Email',
+      'Program Level',
+      'Participant DOB',
+      'CricClubID',
+      'Next Billing Date'
+    ];
+    const rows = [];
 
     for (const sub of allSubscriptions) {
 
@@ -640,28 +652,28 @@ app.get('/admin/seal-report', async (req, res) => {
       if (!item) continue;
 
       const props = item.properties || [];
-      const getProp = (key) => {
-  const searchKey = key.trim().toLowerCase();
-  for (const p of props) {
-    // Remove trailing colons (:: or :)
-    const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
-    if (normalized === searchKey) return p.value || '';
-  }
-  return '';
-};
+      const childFullName = `${getItemProperty(props, 'Child First Name')} ${getItemProperty(props, 'Child Last Name')}`.trim();
+      const participantName = getItemProperty(props, 'Participant Name') || childFullName;
+      const parentName = `${getItemProperty(props, 'Parent First Name')} ${getItemProperty(props, 'Parent Last Name')}`.trim();
 
       const billingAttempts = detail.billing_attempts || [];
-      const now = new Date();
-      const nextAttempt = billingAttempts.find(a => new Date(a.date) >= now);
+      const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
 
-      csv += `"${sub.id}","${item.title}",` +
-             `"${getProp('Parent First Name')}","${getProp('Parent Last Name')}","${getProp('Parent Mobile')}","${getProp('Parent Email')}",` +
-             `"${getProp('Parent City')}","${getProp('Parent State')}","${getProp('Parent Zip')}",` +
-             `"${getProp('Child First Name')}","${getProp('Child Last Name')}","${getProp('Child DOB')}",` +
-			 `"${getProp('Child CricClub ID')}",`+
-             `"${getProp('Program Level')}","${getProp('Billing Interval')}",` +
-             `"${nextAttempt?.date || ''}"\n`;
+      rows.push([
+        sub.id,
+        item.title,
+        participantName,
+        parentName,
+        getItemProperty(props, 'Parent Mobile'),
+        getItemProperty(props, 'Parent Email') || detail.email || '',
+        getItemProperty(props, 'Program Level'),
+        getItemProperty(props, 'Child DOB'),
+        getItemProperty(props, 'Child CricClub ID'),
+        nextAttempt?.date || ''
+      ]);
     }
+
+    const csv = [header, ...rows].map(row => row.map(escapeCsv).join(',')).join('\n') + '\n';
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename=active_seal_subscription_report.csv');
