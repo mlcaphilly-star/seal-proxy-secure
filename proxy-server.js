@@ -2200,23 +2200,7 @@ app.post('/coaching-waiver', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Unable to save waiver. Please try again.' });
   }
 
-  try {
-    await sendCoachingWaiverEmail(waiver.parent_email, pdfBuffer, waiver);
-    await markCoachingWaiverEmailed(waiverId);
-    return res.json({ success: true, waiver_id: waiverId });
-  } catch (err) {
-    console.error('Error emailing coaching waiver:', {
-      message: err.message,
-      code: err.code,
-      response: err.response?.body || err.response || null
-    });
-    return res.json({
-      success: true,
-      waiver_id: waiverId,
-      email_sent: false,
-      warning: 'Waiver was saved, but email could not be sent.'
-    });
-  }
+  return res.json({ success: true, waiver_id: waiverId });
 });
 
 app.get('/admin/coaching-waivers', async (req, res) => {
@@ -2283,6 +2267,73 @@ app.get('/admin/coaching-waivers/:waiverId/pdf', async (req, res) => {
   } catch (err) {
     console.error('Error downloading coaching waiver PDF:', err);
     return res.status(500).json({ success: false, error: 'Unable to download coaching waiver PDF.' });
+  }
+});
+
+app.get('/admin/coaching-waivers-pending-email', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10) || 25, 1), 100);
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          waiver_id,
+          subscription_id,
+          order_id,
+          order_name,
+          customer_email,
+          parent_first_name,
+          parent_last_name,
+          participant_name,
+          emergency_contact_name,
+          emergency_contact_phone,
+          client_ip,
+          status,
+          waiver_payload,
+          submitted_at,
+          paid_at,
+          created_at,
+          OCTET_LENGTH(pdf) AS pdf_size
+        FROM coaching_waivers
+        WHERE status = 'paid'
+          AND emailed_at IS NULL
+        ORDER BY paid_at ASC NULLS LAST, created_at ASC
+        LIMIT $1
+      `,
+      [limit]
+    );
+
+    return res.json({ success: true, waivers: rows });
+  } catch (err) {
+    console.error('Error listing coaching waivers pending email:', err);
+    return res.status(500).json({ success: false, error: 'Unable to list waivers pending email.' });
+  }
+});
+
+app.post('/admin/coaching-waivers/:waiverId/mark-emailed', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        UPDATE coaching_waivers
+        SET emailed_at = NOW(), updated_at = NOW()
+        WHERE waiver_id = $1
+        RETURNING waiver_id, customer_email, status, emailed_at
+      `,
+      [req.params.waiverId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, error: 'Waiver not found.' });
+    }
+
+    return res.json({ success: true, waiver: rows[0] });
+  } catch (err) {
+    console.error('Error marking coaching waiver emailed:', err);
+    return res.status(500).json({ success: false, error: 'Unable to mark waiver emailed.' });
   }
 });
 
