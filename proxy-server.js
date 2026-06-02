@@ -121,7 +121,7 @@ const handleShopifyOrderWebhook = async (req, res) => {
 
 app.post('/shopify/order-paid', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
 app.post('/shopify/order-created', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '8mb' }));
 
 // Initialize DB table if not exists (keeps schema similar to your SQLite original)
 const createTableSQL = `
@@ -1936,6 +1936,8 @@ const getPaidOrderCustomerEmail = (order = {}) =>
   order.email || order.customer?.email || order.contact_email || '';
 
 async function savePendingCoachingWaiver(waiver, pdfBuffer) {
+  await pool.query(createCoachingWaiversTableSQL);
+
   const waiverId = crypto.randomUUID();
   const childNames = (waiver.children || [])
     .map(child => `${child.first_name || ''} ${child.last_name || ''}`.trim())
@@ -2181,15 +2183,30 @@ app.post('/coaching-waiver', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Missing signature.' });
   }
 
+  let pdfBuffer;
+  let waiverId;
+
   try {
-    const pdfBuffer = await buildCoachingWaiverPdf(waiver);
-    const waiverId = await savePendingCoachingWaiver(waiver, pdfBuffer);
+    pdfBuffer = await buildCoachingWaiverPdf(waiver);
+  } catch (err) {
+    console.error('Error creating coaching waiver PDF:', err);
+    return res.status(500).json({ success: false, error: 'Unable to create waiver PDF. Please try again.' });
+  }
+
+  try {
+    waiverId = await savePendingCoachingWaiver(waiver, pdfBuffer);
+  } catch (err) {
+    console.error('Error saving coaching waiver:', err);
+    return res.status(500).json({ success: false, error: 'Unable to save waiver. Please try again.' });
+  }
+
+  try {
     await sendCoachingWaiverEmail(waiver.parent_email, pdfBuffer, waiver);
     await markCoachingWaiverEmailed(waiverId);
     return res.json({ success: true, waiver_id: waiverId });
   } catch (err) {
-    console.error('Error creating coaching waiver PDF:', err);
-    return res.status(500).json({ success: false, error: 'Unable to create and email waiver PDF.' });
+    console.error('Error emailing coaching waiver:', err);
+    return res.status(500).json({ success: false, error: 'Waiver was created but email could not be sent. Please contact support.' });
   }
 });
 
