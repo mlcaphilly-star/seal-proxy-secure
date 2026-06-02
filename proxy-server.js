@@ -2073,6 +2073,17 @@ async function finalizeCoachingWaiversForPaidOrder(order) {
       ]
     );
 
+    try {
+      await sendSavedCoachingWaiverEmail(waiverId);
+    } catch (err) {
+      console.error('Error emailing paid coaching waiver:', {
+        waiver_id: waiverId,
+        message: err.message,
+        code: err.code,
+        response: err.response?.body || err.response || null
+      });
+    }
+
     matchedWaiverIds.push(waiverId);
   }
 
@@ -2146,7 +2157,7 @@ async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
     <p>Thank you,<br>MLCA Coaching</p>
   `;
 
-  await sgMail.send({
+  const msg = {
     to: toEmail,
     from: process.env.EMAIL_FROM,
     subject: 'Signed Coaching Waiver',
@@ -2157,7 +2168,48 @@ async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
       type: 'application/pdf',
       disposition: 'attachment'
     }]
-  });
+  };
+
+  await sgMail.send(msg);
+  console.log('Coaching waiver email sent to', toEmail);
+}
+
+async function sendSavedCoachingWaiverEmail(waiverId) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+        waiver_id,
+        customer_email,
+        parent_first_name,
+        parent_last_name,
+        participant_name,
+        client_ip,
+        waiver_payload,
+        pdf
+      FROM coaching_waivers
+      WHERE waiver_id = $1
+      LIMIT 1
+    `,
+    [waiverId]
+  );
+
+  if (!rows.length) {
+    throw new Error(`Waiver ${waiverId} not found for email`);
+  }
+
+  const row = rows[0];
+  const waiverPayload = row.waiver_payload || {};
+  const waiver = {
+    ...waiverPayload,
+    parent_first_name: waiverPayload.parent_first_name || row.parent_first_name,
+    parent_last_name: waiverPayload.parent_last_name || row.parent_last_name,
+    parent_email: waiverPayload.parent_email || row.customer_email,
+    client_ip: waiverPayload.client_ip || row.client_ip,
+    children: waiverPayload.children || []
+  };
+
+  await sendCoachingWaiverEmail(row.customer_email, row.pdf, waiver);
+  await markCoachingWaiverEmailed(waiverId);
 }
 
 app.post('/coaching-waiver', async (req, res) => {
@@ -2324,7 +2376,23 @@ app.post('/admin/coaching-waivers/:waiverId/test-payment', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Waiver not found.' });
     }
 
-    return res.json({ success: true, waiver: rows[0] });
+    let emailSent = true;
+    let emailError = null;
+
+    try {
+      await sendSavedCoachingWaiverEmail(waiverId);
+    } catch (err) {
+      emailSent = false;
+      emailError = err.message;
+      console.error('Error emailing test-paid coaching waiver:', {
+        waiver_id: waiverId,
+        message: err.message,
+        code: err.code,
+        response: err.response?.body || err.response || null
+      });
+    }
+
+    return res.json({ success: true, waiver: rows[0], email_sent: emailSent, email_error: emailError });
   } catch (err) {
     console.error('Error applying test coaching waiver payment:', err);
     return res.status(500).json({ success: false, error: 'Unable to apply test payment.' });
