@@ -236,7 +236,10 @@
             <canvas id="signaturePad" width="760" height="180" style="width:100%;height:180px;border:1px solid #bbb;border-radius:0.375rem;touch-action:none;background:#fff;"></canvas>
             <div style="display:flex;justify-content:space-between;gap:1rem;margin-top:0.5rem;align-items:center;">
               <small id="signatureHint">Use your finger, mouse, or stylus to sign.</small>
-              <button type="button" id="clearSignature" class="btn-secondary">Clear Signature</button>
+              <div style="display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;">
+                <button type="button" id="generateSignature" class="btn-secondary">Generate Digital Signature</button>
+                <button type="button" id="clearSignature" class="btn-secondary">Clear Signature</button>
+              </div>
             </div>
           </div>
         </fieldset>
@@ -261,6 +264,7 @@
   const submitRegistrationBtn = document.getElementById('submitRegistration');
   const signatureCanvas = document.getElementById('signaturePad');
   const signatureName = document.getElementById('signature_name');
+  const generateSignatureBtn = document.getElementById('generateSignature');
   const clearSignatureBtn = document.getElementById('clearSignature');
   const proxyBase = 'https://seal-proxy-secure.onrender.com';
   const signatureCtx = signatureCanvas.getContext('2d');
@@ -323,6 +327,31 @@
     signatureStarted = false;
   }
 
+  function generateSignature() {
+    const name = signatureName.value.trim();
+    if (!name) {
+      signatureName.focus();
+      errorBox.textContent = 'Please enter Parent/Guardian Signature Name first.';
+      return;
+    }
+
+    errorBox.textContent = '';
+    clearSignature();
+
+    const rect = signatureCanvas.getBoundingClientRect();
+    let fontSize = Math.min(64, Math.max(34, rect.width / Math.max(name.length * 0.55, 8)));
+    signatureCtx.fillStyle = '#111';
+    signatureCtx.textBaseline = 'middle';
+
+    do {
+      signatureCtx.font = `${fontSize}px "Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive`;
+      fontSize -= 2;
+    } while (signatureCtx.measureText(name).width > rect.width - 48 && fontSize > 26);
+
+    signatureCtx.fillText(name, 24, rect.height / 2 + 8);
+    signatureStarted = true;
+  }
+
   signatureCanvas.addEventListener('mousedown', startSignature);
   signatureCanvas.addEventListener('mousemove', drawSignature);
   signatureCanvas.addEventListener('mouseup', stopSignature);
@@ -330,6 +359,7 @@
   signatureCanvas.addEventListener('touchstart', startSignature, { passive: false });
   signatureCanvas.addEventListener('touchmove', drawSignature, { passive: false });
   signatureCanvas.addEventListener('touchend', stopSignature, { passive: false });
+  generateSignatureBtn.addEventListener('click', generateSignature);
   clearSignatureBtn.addEventListener('click', clearSignature);
   window.addEventListener('resize', resizeSignaturePad);
 
