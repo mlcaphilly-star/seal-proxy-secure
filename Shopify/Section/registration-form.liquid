@@ -9,7 +9,6 @@
     <h1 class="h2 text-center mb-6">Coaching Program Registration</h1>
 
     <form id="coachRegForm" class="space-y-6" novalidate>
-      <div id="detailsStep">
       <!-- ========== GUARDIAN INFO ========== -->
       <fieldset style="border:none;padding:0;">
         <legend class="h3 mb-4">Guardian Information</legend>
@@ -205,10 +204,8 @@
           <span>I have read and agree to the Terms of Service *</span>
         </label>
       </fieldset>
-      </div>
-
       <!-- ========== WAIVER ========== -->
-      <section id="waiverStep" hidden style="display:none;">
+      <section id="waiverStep">
         <hr style="margin:2rem 0;border-color:#ccc;">
         <fieldset style="border:none;padding:0;">
           <legend class="h3 mb-4">Liability Waiver</legend>
@@ -250,9 +247,7 @@
 
       <!-- ========== SUBMIT ========== -->
       <div class="text-center pt-4" style="display:flex;justify-content:center;gap:1rem;flex-wrap:wrap;">
-        <button type="button" id="backToDetails" class="btn-secondary" hidden>Back</button>
-        <button type="button" id="showWaiver" class="btn-primary">Checkout</button>
-        <button type="submit" id="submitRegistration" class="btn-primary" hidden>Checkout</button>
+        <button type="submit" id="submitRegistration" class="btn-primary">Checkout</button>
       </div>
     </form>
   </div>
@@ -263,10 +258,6 @@
   const form       = document.getElementById('coachRegForm');
   const childWrap  = document.getElementById('childrenWrap');
   const errorBox   = document.getElementById('formError');
-  const detailsStep = document.getElementById('detailsStep');
-  const waiverStep = document.getElementById('waiverStep');
-  const showWaiverBtn = document.getElementById('showWaiver');
-  const backToDetailsBtn = document.getElementById('backToDetails');
   const submitRegistrationBtn = document.getElementById('submitRegistration');
   const signatureCanvas = document.getElementById('signaturePad');
   const signatureName = document.getElementById('signature_name');
@@ -275,18 +266,6 @@
   const signatureCtx = signatureCanvas.getContext('2d');
   let signatureStarted = false;
   let signatureDrawing = false;
-
-  function setWaiverVisible(isVisible) {
-    waiverStep.hidden = !isVisible;
-    waiverStep.style.display = isVisible ? '' : 'none';
-    signatureName.disabled = !isVisible;
-    clearSignatureBtn.disabled = !isVisible;
-    showWaiverBtn.hidden = isVisible;
-    backToDetailsBtn.hidden = !isVisible;
-    submitRegistrationBtn.hidden = !isVisible;
-  }
-
-  setWaiverVisible(false);
 
   function resizeSignaturePad() {
     const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
@@ -435,6 +414,7 @@
 }
 
   addChild();
+  resizeSignaturePad();
 
   function collectRegistrationData() {
     /* parent props shared on ALL line-items */
@@ -513,36 +493,16 @@
     };
   }
 
-  showWaiverBtn.addEventListener('click', () => {
+  form.onsubmit = async e => {
+    e.preventDefault();
     errorBox.textContent = '';
-    signatureName.disabled = true;
 
     if (!form.checkValidity()) return form.reportValidity();
-
     if (!form.tos.checked) {
       errorBox.textContent = 'Please agree to the terms.';
       return;
     }
 
-    detailsStep.hidden = true;
-    setWaiverVisible(true);
-    resizeSignaturePad();
-    window.scrollTo({ top: waiverStep.offsetTop - 20, behavior: 'smooth' });
-  });
-
-  backToDetailsBtn.addEventListener('click', () => {
-    errorBox.textContent = '';
-    detailsStep.hidden = false;
-    setWaiverVisible(false);
-    window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
-  });
-
-  form.onsubmit = async e => {
-    e.preventDefault();
-    errorBox.textContent = '';
-
-    if (waiverStep.hidden) return;
-    if (!form.checkValidity()) return form.reportValidity();
     if (!signatureStarted) {
       errorBox.textContent = 'Please draw your signature before checkout.';
       return;
