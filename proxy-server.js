@@ -2219,6 +2219,118 @@ app.post('/coaching-waiver', async (req, res) => {
   }
 });
 
+app.get('/admin/coaching-waivers', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10) || 25, 1), 100);
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          waiver_id,
+          subscription_id,
+          order_id,
+          order_name,
+          customer_email,
+          parent_first_name,
+          parent_last_name,
+          participant_name,
+          emergency_contact_name,
+          emergency_contact_phone,
+          client_ip,
+          status,
+          submitted_at,
+          emailed_at,
+          paid_at,
+          created_at,
+          OCTET_LENGTH(pdf) AS pdf_size
+        FROM coaching_waivers
+        ORDER BY created_at DESC
+        LIMIT $1
+      `,
+      [limit]
+    );
+
+    return res.json({ success: true, waivers: rows });
+  } catch (err) {
+    console.error('Error listing coaching waivers:', err);
+    return res.status(500).json({ success: false, error: 'Unable to list coaching waivers.' });
+  }
+});
+
+app.get('/admin/coaching-waivers/:waiverId/pdf', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT waiver_id, pdf
+        FROM coaching_waivers
+        WHERE waiver_id = $1
+        LIMIT 1
+      `,
+      [req.params.waiverId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, error: 'Waiver not found.' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=coaching-waiver-${rows[0].waiver_id}.pdf`);
+    return res.send(rows[0].pdf);
+  } catch (err) {
+    console.error('Error downloading coaching waiver PDF:', err);
+    return res.status(500).json({ success: false, error: 'Unable to download coaching waiver PDF.' });
+  }
+});
+
+app.post('/admin/coaching-waivers/:waiverId/test-payment', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const waiverId = req.params.waiverId;
+  const subscriptionId = String(req.body?.subscription_id || req.query.subscription_id || `TEST-SUB-${Date.now()}`);
+  const orderId = String(req.body?.order_id || req.query.order_id || `TEST-ORDER-${Date.now()}`);
+  const orderName = String(req.body?.order_name || req.query.order_name || `#TEST-${Date.now()}`);
+
+  try {
+    const { rows } = await pool.query(
+      `
+        UPDATE coaching_waivers
+        SET
+          subscription_id = $2,
+          order_id = $3,
+          order_name = $4,
+          status = 'paid',
+          paid_at = NOW(),
+          updated_at = NOW()
+        WHERE waiver_id = $1
+        RETURNING
+          waiver_id,
+          subscription_id,
+          order_id,
+          order_name,
+          customer_email,
+          participant_name,
+          status,
+          paid_at,
+          OCTET_LENGTH(pdf) AS pdf_size
+      `,
+      [waiverId, subscriptionId, orderId, orderName]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, error: 'Waiver not found.' });
+    }
+
+    return res.json({ success: true, waiver: rows[0] });
+  } catch (err) {
+    console.error('Error applying test coaching waiver payment:', err);
+    return res.status(500).json({ success: false, error: 'Unable to apply test payment.' });
+  }
+});
+
 async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
   const rowsHtml = updatedBillingAttempts.map(attempt => `
     <tr>
