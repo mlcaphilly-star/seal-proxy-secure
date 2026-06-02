@@ -2205,8 +2205,17 @@ app.post('/coaching-waiver', async (req, res) => {
     await markCoachingWaiverEmailed(waiverId);
     return res.json({ success: true, waiver_id: waiverId });
   } catch (err) {
-    console.error('Error emailing coaching waiver:', err);
-    return res.status(500).json({ success: false, error: 'Waiver was created but email could not be sent. Please contact support.' });
+    console.error('Error emailing coaching waiver:', {
+      message: err.message,
+      code: err.code,
+      response: err.response?.body || err.response || null
+    });
+    return res.json({
+      success: true,
+      waiver_id: waiverId,
+      email_sent: false,
+      warning: 'Waiver was saved, but email could not be sent.'
+    });
   }
 });
 
