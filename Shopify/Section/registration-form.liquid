@@ -276,8 +276,6 @@
   let signatureStarted = false;
   let signatureDrawing = false;
 
-  signatureName.disabled = true;
-
   function resizeSignaturePad() {
     const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
     const rect = signatureCanvas.getBoundingClientRect();
@@ -518,7 +516,6 @@
     showWaiverBtn.hidden = true;
     backToDetailsBtn.hidden = false;
     submitRegistrationBtn.hidden = false;
-    signatureName.disabled = false;
     resizeSignaturePad();
     window.scrollTo({ top: waiverStep.offsetTop - 20, behavior: 'smooth' });
   });
@@ -530,7 +527,6 @@
     showWaiverBtn.hidden = false;
     backToDetailsBtn.hidden = true;
     submitRegistrationBtn.hidden = true;
-    signatureName.disabled = true;
     window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
   });
 
@@ -580,7 +576,7 @@
 
       if (!resp.ok) throw new Error('Cart add failed');
 
-      location.href = '/checkout';
+      location.href = '/cart';
     } catch (err) {
       errorBox.textContent = err.message || 'Unexpected error, try again.';
       submitRegistrationBtn.disabled = false;
