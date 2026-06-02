@@ -1,0 +1,267 @@
+{% comment %}
+  Coaching Trial Session Registration Form
+  Adds the Coaching Trial Session product to cart with trial-session properties.
+{% endcomment %}
+
+<section class="trial-session-form py-8">
+  <div class="page-width max-w-3xl mx-auto">
+    <h1 class="h2 text-center mb-6">Coaching Trial Session</h1>
+
+    <form id="trialSessionForm" class="space-y-6" novalidate>
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Guardian Information</legend>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:800px;">
+          <div>
+            <label class="label" for="parent_first">Parent First Name *</label>
+            <input id="parent_first" name="parent_first" type="text" class="field__input" value="{{ customer.first_name | escape }}" required style="width:100%;">
+          </div>
+          <div>
+            <label class="label" for="parent_last">Parent Last Name *</label>
+            <input id="parent_last" name="parent_last" type="text" class="field__input" value="{{ customer.last_name | escape }}" required style="width:100%;">
+          </div>
+          <div>
+            <label class="label" for="mobile">Mobile Number *</label>
+            <input id="mobile" name="mobile" type="tel" class="field__input" value="{% if customer.phone != blank %}{{ customer.phone | escape }}{% elsif customer.default_address %}{{ customer.default_address.phone | escape }}{% endif %}" required style="width:100%;">
+          </div>
+          <div>
+            <label class="label" for="email">Email Address *</label>
+            <input id="email" name="email" type="email" class="field__input" value="{{ customer.email | escape }}" required style="width:100%;">
+          </div>
+        </div>
+
+        <div style="max-width:800px;margin-top:1rem;">
+          <label class="label" for="referred_by">Referred By</label>
+          <input id="referred_by" name="referred_by" type="text" class="field__input" style="width:100%;">
+        </div>
+      </fieldset>
+
+      <hr style="margin:2rem 0;border-color:#ccc;">
+
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Participant Details</legend>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;max-width:800px;">
+          <div>
+            <label class="label" for="participant_first">First Name *</label>
+            <input id="participant_first" name="participant_first" type="text" class="field__input" required style="width:100%;">
+          </div>
+          <div>
+            <label class="label" for="participant_last">Last Name *</label>
+            <input id="participant_last" name="participant_last" type="text" class="field__input" required style="width:100%;">
+          </div>
+          <div>
+            <label class="label" for="participant_dob">Date of Birth *</label>
+            <input id="participant_dob" name="participant_dob" type="date" class="field__input" required style="width:100%;">
+          </div>
+        </div>
+      </fieldset>
+
+      <hr style="margin:2rem 0;border-color:#ccc;">
+
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Trial Session</legend>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:800px;">
+          <div>
+            <label class="label" for="trial_location">Location for Trial Session *</label>
+            <select id="trial_location" name="trial_location" class="field__input" required style="width:100%;">
+              <option value="">Loading indoor locations...</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="trial_batch">Next Available Trial Session *</label>
+            <select id="trial_batch" name="trial_batch" class="field__input" required style="width:100%;">
+              <option value="">Select location first</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="trial_date">Available Date and Time *</label>
+            <select id="trial_date" name="trial_date" class="field__input" required style="width:100%;">
+              <option value="">Select batch first</option>
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <div id="trialError" style="color:red;margin-top:1rem;"></div>
+
+      <div class="text-center pt-4">
+        <button type="submit" id="trialCheckout" class="btn-primary">Checkout</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<script>
+(() => {
+  const form = document.getElementById('trialSessionForm');
+  const errorBox = document.getElementById('trialError');
+  const locationSelect = document.getElementById('trial_location');
+  const batchSelect = document.getElementById('trial_batch');
+  const dateSelect = document.getElementById('trial_date');
+  const checkoutButton = document.getElementById('trialCheckout');
+  const proxyBase = 'https://seal-proxy-secure.onrender.com';
+  const productHandle = 'coaching-trial-session';
+  let locations = [];
+  let batches = [];
+
+  function newId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `trial-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function batchLabel(batch) {
+    return `${batch.batch_name} - ${batch.day} ${batch.time}${batch.end_time ? `-${batch.end_time}` : ''}`;
+  }
+
+  async function loadLocations() {
+    const response = await fetch(`${proxyBase}/trial/locations`);
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || 'Could not load trial locations.');
+    locations = data.locations || [];
+    locationSelect.innerHTML = '<option value="">Select location</option>';
+    locations.forEach(location => {
+      const option = document.createElement('option');
+      option.value = location.location_id;
+      option.textContent = `${location.location_name} - ${location.city}, ${location.state}`;
+      locationSelect.appendChild(option);
+    });
+  }
+
+  async function loadBatches(locationId) {
+    batchSelect.innerHTML = '<option value="">Loading trial batches...</option>';
+    dateSelect.innerHTML = '<option value="">Select batch first</option>';
+    const response = await fetch(`${proxyBase}/trial/batches?location_id=${encodeURIComponent(locationId)}`);
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || 'Could not load trial batches.');
+    batches = data.batches || [];
+    batchSelect.innerHTML = '<option value="">Select trial batch</option>';
+    batches.forEach(batch => {
+      const option = document.createElement('option');
+      option.value = batch.batch_id;
+      option.textContent = batchLabel(batch);
+      batchSelect.appendChild(option);
+    });
+  }
+
+  function populateDates(batchId) {
+    const batch = batches.find(row => String(row.batch_id) === String(batchId));
+    dateSelect.innerHTML = '<option value="">Select date</option>';
+    if (!batch) return;
+    (batch.available_dates || []).forEach(date => {
+      const option = document.createElement('option');
+      option.value = date;
+      option.textContent = `${date} ${batch.time}${batch.end_time ? `-${batch.end_time}` : ''}`;
+      dateSelect.appendChild(option);
+    });
+  }
+
+  async function getTrialVariantId() {
+    const response = await fetch(`/products/${productHandle}.js`);
+    if (!response.ok) throw new Error('Coaching Trial Session product was not found.');
+    const product = await response.json();
+    const variant = (product.variants || []).find(item => item.available) || product.variants?.[0];
+    if (!variant) throw new Error('Coaching Trial Session product has no variant.');
+    return variant.id;
+  }
+
+  locationSelect.addEventListener('change', async () => {
+    errorBox.textContent = '';
+    if (!locationSelect.value) return;
+    try {
+      await loadBatches(locationSelect.value);
+    } catch (err) {
+      errorBox.textContent = err.message || 'Could not load trial batches.';
+    }
+  });
+
+  batchSelect.addEventListener('change', () => populateDates(batchSelect.value));
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    errorBox.textContent = '';
+    if (!form.checkValidity()) return form.reportValidity();
+
+    const batch = batches.find(row => String(row.batch_id) === String(batchSelect.value));
+    const location = locations.find(row => String(row.location_id) === String(locationSelect.value));
+    if (!batch || !location) {
+      errorBox.textContent = 'Please select a valid trial location and batch.';
+      return;
+    }
+
+    try {
+      checkoutButton.disabled = true;
+      checkoutButton.textContent = 'Adding to Cart...';
+      const variantId = await getTrialVariantId();
+      const trialCheckoutId = newId();
+
+      const item = {
+        id: variantId,
+        quantity: 1,
+        properties: {
+          'Trial Checkout ID': trialCheckoutId,
+          'Parent First Name': form.parent_first.value.trim(),
+          'Parent Last Name': form.parent_last.value.trim(),
+          'Parent Mobile': form.mobile.value.trim(),
+          'Parent Email': form.email.value.trim(),
+          'Referred By': form.referred_by.value.trim(),
+          'Participant First Name': form.participant_first.value.trim(),
+          'Participant Last Name': form.participant_last.value.trim(),
+          'Participant DOB': form.participant_dob.value,
+          'Trial Location ID': String(location.location_id),
+          'Trial Location': location.location_name,
+          'Trial Batch ID': String(batch.batch_id),
+          'Trial Batch': batch.batch_name,
+          'Trial Day': batch.day,
+          'Trial Date': dateSelect.value,
+          'Trial Time': batch.time,
+          'Trial End Time': batch.end_time || ''
+        }
+      };
+
+      const cartResponse = await fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [item] })
+      });
+
+      if (!cartResponse.ok) throw new Error('Cart add failed.');
+      window.location.href = '/cart';
+    } catch (err) {
+      errorBox.textContent = err.message || 'Could not add trial session to cart.';
+      checkoutButton.disabled = false;
+      checkoutButton.textContent = 'Checkout';
+    }
+  });
+
+  loadLocations().catch(err => {
+    locationSelect.innerHTML = '<option value="">Could not load locations</option>';
+    errorBox.textContent = err.message || 'Could not load trial locations.';
+  });
+})();
+</script>
+
+<style>
+  .trial-session-form .label {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    display: block;
+  }
+
+  .trial-session-form .field__input {
+    border: 1px solid #ccc;
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 1rem;
+  }
+
+  .trial-session-form button.btn-primary {
+    background-color: #2a9d8f;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1.125rem;
+  }
+</style>

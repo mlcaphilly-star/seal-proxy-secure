@@ -174,6 +174,37 @@
             >
           </div>
         </div>
+
+        <div style="max-width:800px;margin-top:1rem;">
+          <label class="label" for="attended_trial">Did the participant attend a trial session?</label>
+          <select id="attended_trial" name="attended_trial" class="field__input" style="width:100%;">
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </div>
+
+        <div id="trialLookupWrap" style="display:none;max-width:800px;margin-top:1rem;">
+          <label class="label" for="trial_session_id">Select Trial Session</label>
+          <select id="trial_session_id" name="trial_session_id" class="field__input" style="width:100%;">
+            <option value="">Enter parent email, then select Yes</option>
+          </select>
+          <div id="trialLookupStatus" style="margin-top:0.5rem;font-size:0.9rem;"></div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem;">
+            <div>
+              <label class="label" for="recommended_day1_batch">Recommended Day 1 Batch</label>
+              <select id="recommended_day1_batch" name="recommended_day1_batch" class="field__input" style="width:100%;">
+                <option value="">Select after trial lookup</option>
+              </select>
+            </div>
+            <div>
+              <label class="label" for="recommended_day2_batch">Recommended Day 2 Batch</label>
+              <select id="recommended_day2_batch" name="recommended_day2_batch" class="field__input" style="width:100%;">
+                <option value="">Select after trial lookup</option>
+              </select>
+            </div>
+          </div>
+        </div>
       </fieldset>
 
       <!-- ========== TERMS ========== -->
@@ -266,10 +297,18 @@
   const signatureName = document.getElementById('signature_name');
   const generateSignatureBtn = document.getElementById('generateSignature');
   const clearSignatureBtn = document.getElementById('clearSignature');
+  const attendedTrial = document.getElementById('attended_trial');
+  const trialLookupWrap = document.getElementById('trialLookupWrap');
+  const trialSessionSelect = document.getElementById('trial_session_id');
+  const trialLookupStatus = document.getElementById('trialLookupStatus');
+  const recommendedDay1Batch = document.getElementById('recommended_day1_batch');
+  const recommendedDay2Batch = document.getElementById('recommended_day2_batch');
   const proxyBase = 'https://seal-proxy-secure.onrender.com';
   const signatureCtx = signatureCanvas.getContext('2d');
   let signatureStarted = false;
   let signatureDrawing = false;
+  let trialSessions = [];
+  let recommendedBatches = [];
 
   function resizeSignaturePad() {
     const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
@@ -352,6 +391,70 @@
     signatureStarted = true;
   }
 
+  function batchLabel(batch) {
+    return `${batch.batch_name || ''} - ${batch.day || ''} ${batch.time || ''}${batch.end_time ? `-${batch.end_time}` : ''}`;
+  }
+
+  function renderRecommendedBatches(allowedIds) {
+    const allowed = new Set((allowedIds || []).map(id => String(id)));
+    const options = recommendedBatches.filter(batch => allowed.has(String(batch.batch_id)));
+    const html = '<option value="">Select batch</option>' + options.map(batch =>
+      `<option value="${batch.batch_id}">${batchLabel(batch)}</option>`
+    ).join('');
+    recommendedDay1Batch.innerHTML = html;
+    recommendedDay2Batch.innerHTML = html;
+  }
+
+  function applyTrialSession(trialSessionId) {
+    const trial = trialSessions.find(row => String(row.trial_session_id) === String(trialSessionId));
+    if (!trial) return;
+
+    form.parent_first.value = trial.parent_first_name || form.parent_first.value;
+    form.parent_last.value = trial.parent_last_name || form.parent_last.value;
+    form.mobile.value = trial.parent_mobile || form.mobile.value;
+
+    const child = childWrap.querySelector('.child-block');
+    if (child) {
+      const i = child.dataset.i;
+      form[`child_first_${i}`].value = trial.participant_first_name || '';
+      form[`child_last_${i}`].value = trial.participant_last_name || '';
+      form[`child_dob_${i}`].value = (trial.participant_dob || '').slice(0, 10);
+    }
+
+    renderRecommendedBatches(trial.recommended_batch_ids || []);
+  }
+
+  async function loadTrialSessionsForEmail() {
+    const email = form.email.value.trim();
+    trialLookupStatus.textContent = '';
+    trialSessionSelect.innerHTML = '<option value="">Loading trial sessions...</option>';
+    recommendedDay1Batch.innerHTML = '<option value="">Select trial session first</option>';
+    recommendedDay2Batch.innerHTML = '<option value="">Select trial session first</option>';
+
+    if (!email) {
+      trialLookupStatus.textContent = 'Enter parent email first.';
+      trialSessionSelect.innerHTML = '<option value="">Enter parent email first</option>';
+      return;
+    }
+
+    const response = await fetch(`${proxyBase}/trial/pending?email=${encodeURIComponent(email)}`);
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || 'Could not load trial sessions.');
+
+    trialSessions = data.trial_sessions || [];
+    recommendedBatches = data.recommended_batches || [];
+    if (!trialSessions.length) {
+      trialLookupStatus.textContent = 'No paid unconverted trial sessions found for this email.';
+      trialSessionSelect.innerHTML = '<option value="">No trial sessions found</option>';
+      return;
+    }
+
+    trialLookupStatus.textContent = `${trialSessions.length} trial session(s) found.`;
+    trialSessionSelect.innerHTML = '<option value="">Select trial session</option>' + trialSessions.map(trial =>
+      `<option value="${trial.trial_session_id}">${trial.participant_first_name} ${trial.participant_last_name} - ${trial.trial_date} ${trial.batch_name || ''}</option>`
+    ).join('');
+  }
+
   signatureCanvas.addEventListener('mousedown', startSignature);
   signatureCanvas.addEventListener('mousemove', drawSignature);
   signatureCanvas.addEventListener('mouseup', stopSignature);
@@ -362,6 +465,16 @@
   generateSignatureBtn.addEventListener('click', generateSignature);
   clearSignatureBtn.addEventListener('click', clearSignature);
   window.addEventListener('resize', resizeSignaturePad);
+  attendedTrial.addEventListener('change', async () => {
+    trialLookupWrap.style.display = attendedTrial.value === 'yes' ? 'block' : 'none';
+    if (attendedTrial.value !== 'yes') return;
+    try {
+      await loadTrialSessionsForEmail();
+    } catch (err) {
+      trialLookupStatus.textContent = err.message || 'Could not load trial sessions.';
+    }
+  });
+  trialSessionSelect.addEventListener('change', () => applyTrialSession(trialSessionSelect.value));
 
   /* =====  YOUR ID MAPS  ===== */
   const variantId = {
@@ -461,6 +574,14 @@
       'Emergency Contact Name': form.emergency_contact_name.value.trim(),
       'Emergency Contact Phone': form.emergency_contact_phone.value.trim()
     };
+    const trialProps = attendedTrial.value === 'yes' ? {
+      'Attended Trial Session': 'Yes',
+      'Trial Session ID': trialSessionSelect.value,
+      'Day 1 Batch ID': recommendedDay1Batch.value,
+      'Day 2 Batch ID': recommendedDay2Batch.value
+    } : {
+      'Attended Trial Session': 'No'
+    };
 
     /* build one cart item per child */
     const lineItems = [];
@@ -485,6 +606,7 @@
         selling_plan: spId,
         properties: {
           ...parentProps,
+          ...trialProps,
           'Child First Name': form[`child_first_${i}`].value.trim(),
           'Child Last Name': form[`child_last_${i}`].value.trim(),
           'Child DOB': form[`child_dob_${i}`].value,
@@ -531,6 +653,17 @@
     if (!form.tos.checked) {
       errorBox.textContent = 'Please agree to the terms.';
       return;
+    }
+
+    if (attendedTrial.value === 'yes') {
+      if (!trialSessionSelect.value) {
+        errorBox.textContent = 'Please select the paid trial session.';
+        return;
+      }
+      if (!recommendedDay1Batch.value || !recommendedDay2Batch.value) {
+        errorBox.textContent = 'Please select Day 1 and Day 2 recommended batches.';
+        return;
+      }
     }
 
     if (!signatureStarted) {

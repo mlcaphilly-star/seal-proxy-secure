@@ -76,6 +76,29 @@ const daysBetweenInclusive = (fromDate, toDate) => {
 
 const previousDateString = (dateValue) => addDaysToDateString(dateValue, -1);
 
+const parseBoolean = (value) =>
+  value === true || value === 'true' || value === '1' || value === 1 || value === 'on';
+
+const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const getNextDatesForDay = (dayName, count = 6) => {
+  const targetIndex = dayNames.findIndex(day => day.toLowerCase() === String(dayName || '').toLowerCase());
+  if (targetIndex < 0) return [];
+
+  const dates = [];
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+
+  while (dates.length < count) {
+    if (cursor.getDay() === targetIndex) {
+      dates.push(getDateStringInTimeZone(cursor, 'UTC'));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+};
+
 if (!SEAL_TOKEN || !ALLOWED_ORIGIN) {
   console.error('ERROR: SEAL_TOKEN and ALLOWED_ORIGIN must be set in .env file');
   process.exit(1);
@@ -111,8 +134,9 @@ const handleShopifyOrderWebhook = async (req, res) => {
     }
 
     const order = JSON.parse(req.body.toString('utf8'));
-    const result = await finalizeCoachingWaiversForPaidOrder(order);
-    return res.json({ success: true, ...result });
+    const waiverResult = await finalizeCoachingWaiversForPaidOrder(order);
+    const trialResult = await finalizeTrialSessionsForPaidOrder(order);
+    return res.json({ success: true, waivers: waiverResult, trials: trialResult });
   } catch (err) {
     console.error('Error processing Shopify order paid webhook:', err);
     return res.status(500).json({ success: false, error: 'Webhook processing failed' });
@@ -199,6 +223,14 @@ pool.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS location_id INT')
   .then(() => console.log('batches location_id column ready'))
   .catch(err => console.error('Error creating batches location_id column:', err));
 
+pool.query('ALTER TABLE locations ADD COLUMN IF NOT EXISTS is_indoor BOOLEAN NOT NULL DEFAULT false')
+  .then(() => console.log('locations is_indoor column ready'))
+  .catch(err => console.error('Error creating locations is_indoor column:', err));
+
+pool.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS is_trial_batch BOOLEAN NOT NULL DEFAULT false')
+  .then(() => console.log('batches is_trial_batch column ready'))
+  .catch(err => console.error('Error creating batches is_trial_batch column:', err));
+
 pool.query(`
   DO $$
   BEGIN
@@ -272,6 +304,48 @@ pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_waivers_subscription_id ON c
 pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_waivers_email_status ON coaching_waivers(customer_email, status)')
   .then(() => console.log('coaching_waivers email/status index ready'))
   .catch(err => console.error('Error creating coaching_waivers email/status index:', err));
+
+const createTrialSessionsTableSQL = `
+CREATE TABLE IF NOT EXISTS trial_sessions (
+  trial_session_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'pending_checkout',
+  converted_to_coaching BOOLEAN NOT NULL DEFAULT false,
+  order_id TEXT,
+  order_name TEXT,
+  customer_email TEXT NOT NULL,
+  parent_first_name TEXT NOT NULL,
+  parent_last_name TEXT NOT NULL,
+  parent_mobile TEXT NOT NULL,
+  referred_by TEXT,
+  participant_first_name TEXT NOT NULL,
+  participant_last_name TEXT NOT NULL,
+  participant_dob DATE NOT NULL,
+  location_id INT REFERENCES locations(location_id),
+  batch_id INT REFERENCES batches(batch_id),
+  trial_date DATE NOT NULL,
+  trial_time TEXT,
+  trial_end_time TEXT,
+  recommended_batch_ids INT[],
+  coach_notes TEXT,
+  customer_email_sent_at TIMESTAMPTZ,
+  coach_email_sent_at TIMESTAMPTZ,
+  paid_at TIMESTAMPTZ,
+  converted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createTrialSessionsTableSQL)
+  .then(() => console.log('trial_sessions table ready'))
+  .catch(err => console.error('Error creating trial_sessions table:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_trial_sessions_email_status ON trial_sessions(customer_email, status, converted_to_coaching)')
+  .then(() => console.log('trial_sessions email/status index ready'))
+  .catch(err => console.error('Error creating trial_sessions email/status index:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_trial_sessions_batch_date ON trial_sessions(batch_id, trial_date)')
+  .then(() => console.log('trial_sessions batch/date index ready'))
+  .catch(err => console.error('Error creating trial_sessions batch/date index:', err));
 
 // Root
 app.get('/', (req, res) => {
@@ -1029,7 +1103,7 @@ app.get('/admin/locations', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT location_id, location_name, address_1, address_2, city, state, zip, country
+      `SELECT location_id, location_name, address_1, address_2, city, state, zip, country, is_indoor
        FROM locations
        ORDER BY location_name ASC, city ASC`
     );
@@ -1050,6 +1124,7 @@ app.post('/admin/locations', async (req, res) => {
   const state = String(req.body.state || '').trim();
   const zip = String(req.body.zip || '').trim();
   const country = String(req.body.country || '').trim();
+  const isIndoor = parseBoolean(req.body.is_indoor);
 
   if (!locationName || !address1 || !city || !state || !zip || !country) {
     return res.status(400).json({
@@ -1060,16 +1135,67 @@ app.post('/admin/locations', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO locations (location_name, address_1, address_2, city, state, zip, country)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING location_id, location_name, address_1, address_2, city, state, zip, country`,
-      [locationName, address1, address2 || null, city, state, zip, country]
+      `INSERT INTO locations (location_name, address_1, address_2, city, state, zip, country, is_indoor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING location_id, location_name, address_1, address_2, city, state, zip, country, is_indoor`,
+      [locationName, address1, address2 || null, city, state, zip, country, isIndoor]
     );
 
     return res.json({ success: true, location: rows[0] });
   } catch (err) {
     console.error('Admin location create error:', err);
     return res.status(500).json({ success: false, error: 'Failed to create location.' });
+  }
+});
+
+app.put('/admin/locations/:locationId', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const locationId = Number(req.params.locationId);
+  const locationName = String(req.body.location_name || '').trim();
+  const address1 = String(req.body.address_1 || '').trim();
+  const address2 = String(req.body.address_2 || '').trim();
+  const city = String(req.body.city || '').trim();
+  const state = String(req.body.state || '').trim();
+  const zip = String(req.body.zip || '').trim();
+  const country = String(req.body.country || '').trim();
+  const isIndoor = parseBoolean(req.body.is_indoor);
+
+  if (!Number.isInteger(locationId) || locationId < 1) {
+    return res.status(400).json({ success: false, error: 'Invalid location id.' });
+  }
+
+  if (!locationName || !address1 || !city || !state || !zip || !country) {
+    return res.status(400).json({
+      success: false,
+      error: 'Location name, address 1, city, state, zip, and country are required.'
+    });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE locations
+       SET location_name = $1,
+           address_1 = $2,
+           address_2 = $3,
+           city = $4,
+           state = $5,
+           zip = $6,
+           country = $7,
+           is_indoor = $8
+       WHERE location_id = $9
+       RETURNING location_id, location_name, address_1, address_2, city, state, zip, country, is_indoor`,
+      [locationName, address1, address2 || null, city, state, zip, country, isIndoor, locationId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, error: 'Location not found.' });
+    }
+
+    return res.json({ success: true, location: rows[0] });
+  } catch (err) {
+    console.error('Admin location update error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update location.' });
   }
 });
 
@@ -1085,8 +1211,10 @@ app.get('/admin/batches', async (req, res) => {
          b.day,
          b.time,
          b.end_time,
+         b.is_trial_batch,
          b.comments,
-         l.location_name
+         l.location_name,
+         l.is_indoor
        FROM batches b
        LEFT JOIN locations l ON l.location_id = b.location_id
        ORDER BY
@@ -1120,6 +1248,7 @@ app.post('/admin/batches', async (req, res) => {
   const time = String(req.body.time || '').trim();
   const endTime = String(req.body.end_time || '').trim();
   const comments = String(req.body.comments || '').trim();
+  const isTrialBatch = parseBoolean(req.body.is_trial_batch);
 
   if (!Number.isInteger(locationId) || locationId < 1 || !batchName || !day || !time) {
     return res.status(400).json({ success: false, error: 'Location, batch name, day, and time are required.' });
@@ -1127,10 +1256,10 @@ app.post('/admin/batches', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO batches (location_id, batch_name, day, time, end_time, comments)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments`,
-      [locationId, batchName, day, time, endTime || null, comments]
+      `INSERT INTO batches (location_id, batch_name, day, time, end_time, comments, is_trial_batch)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments, is_trial_batch`,
+      [locationId, batchName, day, time, endTime || null, comments, isTrialBatch]
     );
 
     return res.json({ success: true, batch: rows[0] });
@@ -1150,6 +1279,7 @@ app.put('/admin/batches/:batchId', async (req, res) => {
   const time = String(req.body.time || '').trim();
   const endTime = String(req.body.end_time || '').trim();
   const comments = String(req.body.comments || '').trim();
+  const isTrialBatch = parseBoolean(req.body.is_trial_batch);
 
   if (!Number.isInteger(batchId) || batchId < 1) {
     return res.status(400).json({ success: false, error: 'Invalid batch id.' });
@@ -1162,10 +1292,10 @@ app.put('/admin/batches/:batchId', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `UPDATE batches
-       SET location_id = $1, batch_name = $2, day = $3, time = $4, end_time = $5, comments = $6
-       WHERE batch_id = $7
-       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments`,
-      [locationId, batchName, day, time, endTime || null, comments, batchId]
+       SET location_id = $1, batch_name = $2, day = $3, time = $4, end_time = $5, comments = $6, is_trial_batch = $7
+       WHERE batch_id = $8
+       RETURNING batch_id, location_id, batch_name, day, time, end_time, comments, is_trial_batch`,
+      [locationId, batchName, day, time, endTime || null, comments, isTrialBatch, batchId]
     );
 
     if (!rows.length) {
@@ -1213,6 +1343,307 @@ app.delete('/admin/batches/:batchId', async (req, res) => {
   } catch (err) {
     console.error('Admin batch delete error:', err);
     return res.status(500).json({ success: false, error: 'Failed to delete batch.' });
+  }
+});
+
+app.get('/trial/locations', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT DISTINCT
+          l.location_id,
+          l.location_name,
+          l.address_1,
+          l.address_2,
+          l.city,
+          l.state,
+          l.zip,
+          l.country
+        FROM locations l
+        JOIN batches b ON b.location_id = l.location_id
+        WHERE l.is_indoor = true
+          AND b.is_trial_batch = true
+        ORDER BY l.location_name ASC, l.city ASC
+      `
+    );
+
+    return res.json({ success: true, locations: rows });
+  } catch (err) {
+    console.error('Trial locations error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load trial locations.' });
+  }
+});
+
+app.get('/trial/batches', async (req, res) => {
+  const locationId = Number(req.query.location_id || 0);
+  if (!Number.isInteger(locationId) || locationId < 1) {
+    return res.status(400).json({ success: false, error: 'Location is required.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          b.batch_id,
+          b.location_id,
+          b.batch_name,
+          b.day,
+          b.time,
+          b.end_time,
+          b.comments,
+          l.location_name
+        FROM batches b
+        JOIN locations l ON l.location_id = b.location_id
+        WHERE b.location_id = $1
+          AND b.is_trial_batch = true
+          AND l.is_indoor = true
+        ORDER BY
+          CASE b.day
+            WHEN 'Monday' THEN 1
+            WHEN 'Tuesday' THEN 2
+            WHEN 'Wednesday' THEN 3
+            WHEN 'Thursday' THEN 4
+            WHEN 'Friday' THEN 5
+            WHEN 'Saturday' THEN 6
+            WHEN 'Sunday' THEN 7
+            ELSE 8
+          END,
+          b.time ASC,
+          b.batch_name ASC
+      `,
+      [locationId]
+    );
+
+    return res.json({
+      success: true,
+      batches: rows.map(row => ({
+        ...row,
+        available_dates: getNextDatesForDay(row.day, 6)
+      }))
+    });
+  } catch (err) {
+    console.error('Trial batches error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load trial batches.' });
+  }
+});
+
+app.get('/trial/pending', async (req, res) => {
+  const email = String(req.query.email || '').trim();
+  if (!email) return res.status(400).json({ success: false, error: 'Email is required.' });
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          ts.trial_session_id,
+          ts.customer_email,
+          ts.parent_first_name,
+          ts.parent_last_name,
+          ts.parent_mobile,
+          ts.participant_first_name,
+          ts.participant_last_name,
+          ts.participant_dob::text,
+          ts.location_id,
+          ts.batch_id,
+          ts.trial_date::text,
+          ts.trial_time,
+          ts.trial_end_time,
+          ts.recommended_batch_ids,
+          ts.coach_notes,
+          b.batch_name,
+          l.location_name
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        WHERE lower(ts.customer_email) = lower($1)
+          AND ts.status = 'paid'
+          AND ts.converted_to_coaching = false
+        ORDER BY ts.trial_date DESC, ts.created_at DESC
+        LIMIT 10
+      `,
+      [email]
+    );
+
+    const recommendedIds = [...new Set(rows.flatMap(row => row.recommended_batch_ids || []))];
+    let recommendedBatches = [];
+    if (recommendedIds.length) {
+      const batchResult = await pool.query(
+        `
+          SELECT
+            b.batch_id,
+            b.batch_name,
+            b.day,
+            b.time,
+            b.end_time,
+            b.location_id,
+            l.location_name
+          FROM batches b
+          LEFT JOIN locations l ON l.location_id = b.location_id
+          WHERE b.batch_id = ANY($1::int[])
+          ORDER BY b.batch_name ASC
+        `,
+        [recommendedIds]
+      );
+      recommendedBatches = batchResult.rows;
+    }
+
+    return res.json({ success: true, trial_sessions: rows, recommended_batches: recommendedBatches });
+  } catch (err) {
+    console.error('Trial pending lookup error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load trial sessions.' });
+  }
+});
+
+app.get('/admin/trial-sessions', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const status = String(req.query.status || '').trim();
+  const where = status ? 'WHERE ts.status = $1' : '';
+  const params = status ? [status] : [];
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          ts.*,
+          ts.participant_dob::text,
+          ts.trial_date::text,
+          b.batch_name,
+          l.location_name
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        ${where}
+        ORDER BY ts.trial_date DESC, ts.created_at DESC
+        LIMIT 100
+      `,
+      params
+    );
+
+    return res.json({ success: true, trial_sessions: rows });
+  } catch (err) {
+    console.error('Admin trial sessions error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load trial sessions.' });
+  }
+});
+
+app.put('/coach/trial-sessions/:trialSessionId/recommendations', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const recommendedBatchIds = (req.body.recommended_batch_ids || [])
+    .map(id => Number(id))
+    .filter(id => Number.isInteger(id) && id > 0)
+    .slice(0, 4);
+  const coachNotes = String(req.body.coach_notes || '').trim();
+
+  try {
+    const { rows } = await pool.query(
+      `
+        UPDATE trial_sessions
+        SET recommended_batch_ids = $2::int[],
+            coach_notes = $3,
+            updated_at = NOW()
+        WHERE trial_session_id = $1
+        RETURNING trial_session_id, recommended_batch_ids, coach_notes
+      `,
+      [req.params.trialSessionId, recommendedBatchIds, coachNotes || null]
+    );
+
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Trial session not found.' });
+    return res.json({ success: true, trial_session: rows[0] });
+  } catch (err) {
+    console.error('Trial recommendations error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save trial recommendations.' });
+  }
+});
+
+app.get('/admin/trial-sessions-pending-customer-email', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT ts.*, ts.participant_dob::text, ts.trial_date::text, b.batch_name, l.location_name
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        WHERE ts.status = 'paid'
+          AND ts.customer_email_sent_at IS NULL
+        ORDER BY ts.paid_at ASC NULLS LAST, ts.created_at ASC
+        LIMIT 50
+      `
+    );
+    return res.json({ success: true, trial_sessions: rows });
+  } catch (err) {
+    console.error('Trial customer email poll error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load trial sessions pending customer email.' });
+  }
+});
+
+app.get('/admin/trial-sessions-today-for-coaches', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const today = req.query.date || getDateStringInTimeZone(new Date());
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT ts.*, ts.participant_dob::text, ts.trial_date::text, b.batch_name, l.location_name
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        WHERE ts.status = 'paid'
+          AND ts.trial_date = $1::date
+          AND ts.coach_email_sent_at IS NULL
+        ORDER BY ts.trial_time ASC, ts.participant_first_name ASC
+      `,
+      [today]
+    );
+    return res.json({ success: true, date: today, trial_sessions: rows });
+  } catch (err) {
+    console.error('Trial coach email poll error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load today trial sessions.' });
+  }
+});
+
+app.post('/admin/trial-sessions/:trialSessionId/mark-customer-emailed', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE trial_sessions SET customer_email_sent_at = NOW(), updated_at = NOW()
+       WHERE trial_session_id = $1
+       RETURNING trial_session_id, customer_email_sent_at`,
+      [req.params.trialSessionId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Trial session not found.' });
+    return res.json({ success: true, trial_session: rows[0] });
+  } catch (err) {
+    console.error('Trial mark customer emailed error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to mark customer emailed.' });
+  }
+});
+
+app.post('/admin/trial-sessions/mark-coach-emailed', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const ids = (req.body.trial_session_ids || [])
+    .map(id => String(id).trim())
+    .filter(Boolean);
+
+  if (!ids.length) return res.status(400).json({ success: false, error: 'trial_session_ids are required.' });
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE trial_sessions SET coach_email_sent_at = NOW(), updated_at = NOW()
+       WHERE trial_session_id = ANY($1::text[])
+       RETURNING trial_session_id, coach_email_sent_at`,
+      [ids]
+    );
+    return res.json({ success: true, trial_sessions: rows });
+  } catch (err) {
+    console.error('Trial mark coach emailed error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to mark coach emailed.' });
   }
 });
 
@@ -2077,6 +2508,109 @@ async function finalizeCoachingWaiversForPaidOrder(order) {
   }
 
   return { matched_waiver_ids: matchedWaiverIds };
+}
+
+async function finalizeTrialSessionsForPaidOrder(order) {
+  const financialStatus = String(order.financial_status || '').toLowerCase();
+  const paymentStatus = String(order.payment_status || '').toLowerCase();
+  const isPaid = ['paid', 'partially_paid'].includes(financialStatus) || ['paid', 'partially_paid'].includes(paymentStatus);
+
+  if (!isPaid) {
+    return { skipped: true, reason: `Order is not paid yet. financial_status=${financialStatus || 'unknown'}` };
+  }
+
+  const lineItems = order.line_items || [];
+  const createdTrialIds = [];
+  const convertedTrialIds = [];
+
+  for (const lineItem of lineItems) {
+    const trialCheckoutId = getOrderLineProperty(lineItem, 'Trial Checkout ID');
+    if (trialCheckoutId) {
+      await pool.query(
+        `
+          INSERT INTO trial_sessions (
+            trial_session_id,
+            status,
+            order_id,
+            order_name,
+            customer_email,
+            parent_first_name,
+            parent_last_name,
+            parent_mobile,
+            referred_by,
+            participant_first_name,
+            participant_last_name,
+            participant_dob,
+            location_id,
+            batch_id,
+            trial_date,
+            trial_time,
+            trial_end_time,
+            paid_at
+          )
+          VALUES ($1, 'paid', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12, $13, $14::date, $15, $16, NOW())
+          ON CONFLICT (trial_session_id) DO UPDATE
+          SET
+            status = 'paid',
+            order_id = EXCLUDED.order_id,
+            order_name = EXCLUDED.order_name,
+            paid_at = COALESCE(trial_sessions.paid_at, NOW()),
+            updated_at = NOW()
+        `,
+        [
+          trialCheckoutId,
+          String(order.id || ''),
+          String(order.name || order.order_number || ''),
+          getPaidOrderCustomerEmail(order) || getOrderLineProperty(lineItem, 'Parent Email'),
+          getOrderLineProperty(lineItem, 'Parent First Name'),
+          getOrderLineProperty(lineItem, 'Parent Last Name'),
+          getOrderLineProperty(lineItem, 'Parent Mobile'),
+          getOrderLineProperty(lineItem, 'Referred By'),
+          getOrderLineProperty(lineItem, 'Participant First Name'),
+          getOrderLineProperty(lineItem, 'Participant Last Name'),
+          getOrderLineProperty(lineItem, 'Participant DOB'),
+          Number(getOrderLineProperty(lineItem, 'Trial Location ID') || 0) || null,
+          Number(getOrderLineProperty(lineItem, 'Trial Batch ID') || 0) || null,
+          getOrderLineProperty(lineItem, 'Trial Date'),
+          getOrderLineProperty(lineItem, 'Trial Time'),
+          getOrderLineProperty(lineItem, 'Trial End Time') || null
+        ]
+      );
+      createdTrialIds.push(trialCheckoutId);
+    }
+
+    const trialSessionId = getOrderLineProperty(lineItem, 'Trial Session ID');
+    if (trialSessionId) {
+      const subscriptionId = await findSubscriptionIdForOrderLine(order, lineItem);
+      const day1BatchId = Number(getOrderLineProperty(lineItem, 'Day 1 Batch ID') || 0);
+      const day2BatchId = Number(getOrderLineProperty(lineItem, 'Day 2 Batch ID') || 0);
+      const batchIds = [day1BatchId, day2BatchId].filter(id => Number.isInteger(id) && id > 0);
+
+      await pool.query(
+        `
+          UPDATE trial_sessions
+          SET converted_to_coaching = true,
+              converted_at = NOW(),
+              updated_at = NOW()
+          WHERE trial_session_id = $1
+        `,
+        [trialSessionId]
+      );
+
+      if (subscriptionId && batchIds.length) {
+        await replaceBatchAssignmentsForSubscription({
+          subscriptionId,
+          batchIds,
+          effectiveFromDate: getDateStringInTimeZone(new Date()),
+          closeExisting: true
+        });
+      }
+
+      convertedTrialIds.push(trialSessionId);
+    }
+  }
+
+  return { created_trial_ids: createdTrialIds, converted_trial_ids: convertedTrialIds };
 }
 
 const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
