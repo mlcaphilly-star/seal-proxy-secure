@@ -208,7 +208,7 @@
       </div>
 
       <!-- ========== WAIVER ========== -->
-      <section id="waiverStep" hidden>
+      <section id="waiverStep" hidden style="display:none;">
         <hr style="margin:2rem 0;border-color:#ccc;">
         <fieldset style="border:none;padding:0;">
           <legend class="h3 mb-4">Liability Waiver</legend>
@@ -275,6 +275,18 @@
   const signatureCtx = signatureCanvas.getContext('2d');
   let signatureStarted = false;
   let signatureDrawing = false;
+
+  function setWaiverVisible(isVisible) {
+    waiverStep.hidden = !isVisible;
+    waiverStep.style.display = isVisible ? '' : 'none';
+    signatureName.disabled = !isVisible;
+    clearSignatureBtn.disabled = !isVisible;
+    showWaiverBtn.hidden = isVisible;
+    backToDetailsBtn.hidden = !isVisible;
+    submitRegistrationBtn.hidden = !isVisible;
+  }
+
+  setWaiverVisible(false);
 
   function resizeSignaturePad() {
     const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
@@ -503,6 +515,7 @@
 
   showWaiverBtn.addEventListener('click', () => {
     errorBox.textContent = '';
+    signatureName.disabled = true;
 
     if (!form.checkValidity()) return form.reportValidity();
 
@@ -512,10 +525,7 @@
     }
 
     detailsStep.hidden = true;
-    waiverStep.hidden = false;
-    showWaiverBtn.hidden = true;
-    backToDetailsBtn.hidden = false;
-    submitRegistrationBtn.hidden = false;
+    setWaiverVisible(true);
     resizeSignaturePad();
     window.scrollTo({ top: waiverStep.offsetTop - 20, behavior: 'smooth' });
   });
@@ -523,10 +533,7 @@
   backToDetailsBtn.addEventListener('click', () => {
     errorBox.textContent = '';
     detailsStep.hidden = false;
-    waiverStep.hidden = true;
-    showWaiverBtn.hidden = false;
-    backToDetailsBtn.hidden = true;
-    submitRegistrationBtn.hidden = true;
+    setWaiverVisible(false);
     window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
   });
 
