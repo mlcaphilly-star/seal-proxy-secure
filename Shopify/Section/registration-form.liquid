@@ -1,0 +1,638 @@
+{% comment %}
+  Coaching Program Registration Form – Debut Theme
+  Prefills guardian fields from the logged‑in customer object.
+  If the visitor isn’t logged in, inputs stay blank but remain required.
+{% endcomment %}
+
+<section class="registration-form py-8">
+  <div class="page-width max-w-3xl mx-auto">
+    <h1 class="h2 text-center mb-6">Coaching Program Registration</h1>
+
+    <form id="coachRegForm" class="space-y-6" novalidate>
+      <div id="detailsStep">
+      <!-- ========== GUARDIAN INFO ========== -->
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Guardian Information</legend>
+
+        <!-- Row 1 -->
+        <div style="display:flex;gap:1rem;max-width:800px;">
+          <div style="flex:1 1 50%">
+            <label class="label" for="parent_first">Parent First Name *</label>
+            <input
+              id="parent_first"
+              name="parent_first"
+              type="text"
+              class="field__input"
+              value="{{ customer.first_name | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 50%">
+            <label class="label" for="parent_last">Parent Last Name *</label>
+            <input
+              id="parent_last"
+              name="parent_last"
+              type="text"
+              class="field__input"
+              value="{{ customer.last_name | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+        </div>
+
+        <!-- Row 2 -->
+        <div style="display:flex;gap:1rem;max-width:800px;">
+          <div style="flex:0 0 30%">
+            <label class="label" for="mobile">Mobile Number *</label>
+            <input
+              id="mobile"
+              name="mobile"
+              type="tel"
+              pattern="^[0-9\\-\\+\\s\\(\\)]*$"
+              class="field__input"
+              value="{% if customer.phone != blank %}{{ customer.phone | escape }}{% elsif customer.default_address %}{{ customer.default_address.phone | escape }}{% endif %}"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 70%">
+            <label class="label" for="email">Email Address *</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              class="field__input"
+              value="{{ customer.email | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+        </div>
+
+        <!-- Row 3 -->
+        <div style="display:flex;gap:1rem;max-width:800px;">
+          <div style="flex:1 1 70%">
+            <label class="label" for="address1">Address Line&nbsp;1 *</label>
+            <input
+              id="address1"
+              name="address1"
+              type="text"
+              class="field__input"
+              value="{{ customer.default_address.address1 | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 30%">
+            <label class="label" for="address2">Address Line 2</label>
+            <input
+              id="address2"
+              name="address2"
+              type="text"
+              class="field__input"
+              value="{{ customer.default_address.address2 | escape }}"
+              style="width:100%"
+            >
+          </div>
+        </div>
+
+        <!-- Row 4 -->
+        <div style="display:flex;gap:1rem;max-width:800px;">
+          <div style="flex:1 1 33.33%">
+            <label class="label" for="city">City *</label>
+            <input
+              id="city"
+              name="city"
+              type="text"
+              class="field__input"
+              value="{{ customer.default_address.city | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 33.33%">
+            <label class="label" for="state">State *</label>
+            <input
+              id="state"
+              name="state"
+              type="text"
+              class="field__input"
+              value="{{ customer.default_address.province | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 33.33%">
+            <label class="label" for="zip">Zip *</label>
+            <input
+              id="zip"
+              name="zip"
+              type="text"
+              class="field__input"
+              value="{{ customer.default_address.zip | escape }}"
+              required
+              style="width:100%"
+            >
+          </div>
+        </div>
+
+        <!-- Row 5 -->
+        <div style="display:flex;gap:1rem;max-width:800px;">
+          <div style="flex:1 1 50%">
+            <label class="label" for="emergency_contact_name">Emergency Contact Name *</label>
+            <input
+              id="emergency_contact_name"
+              name="emergency_contact_name"
+              type="text"
+              class="field__input"
+              required
+              style="width:100%"
+            >
+          </div>
+
+          <div style="flex:1 1 50%">
+            <label class="label" for="emergency_contact_phone">Emergency Contact Phone *</label>
+            <input
+              id="emergency_contact_phone"
+              name="emergency_contact_phone"
+              type="tel"
+              pattern="^[0-9\\-\\+\\s\\(\\)]*$"
+              class="field__input"
+              required
+              style="width:100%"
+            >
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- ========== CHILDREN INFO ========== -->
+      <hr style="margin:2rem 0;border-color:#ccc;">
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Minor Participants' Details</legend>
+        <div id="childrenWrap" style="display:flex;flex-direction:column;gap:1rem;"></div>
+      </fieldset>
+
+      <!-- ========== TERMS ========== -->
+      <hr style="margin:2rem 0;border-color:#ccc;">
+      <fieldset style="border:none;padding:0;">
+        <legend class="h3 mb-4">Terms of Service</legend>
+        <div style="border:1px solid #e5e5e5;border-radius:0.375rem;padding:1rem;max-width:800px;max-height:260px;overflow-y:auto;font-size:0.875rem;line-height:1.35;">
+          <ol style="list-style: decimal inside; padding-left: 1.25rem; margin: 0;">
+            <li>I understand the coaching is year‑round and we are committed to one quarter to start with coaching.</li>
+            <li>If participants fail to attend any session, no reimbursement / credit will be given.</li>
+            <li>
+              Christmas, Thanksgiving and New Year, 4 July, Memorial Day, Labor Day holidays are included in the
+              coaching fee. No credit will be given for these holidays.
+            </li>
+            <li>
+              I support my child’s commitment to become a member of the StarSportsUS / MLC Academy Philadelphia...
+            </li>
+            <li>I will stay away from the nets/ground during coaching sessions/games...</li>
+            <li>I will not reach out to any coach directly for services provided by MLC Academy Philadelphia...</li>
+            <li>I will refrain from public complaints about coaching and other players...</li>
+            <li>I will make payments for coaching fees as scheduled...</li>
+            <li>I will offer my help as a volunteer...</li>
+            <li>I have signed the Liability Waiver and Media Consent Form for MLCAP and StarSportsUS.</li>
+          </ol>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:0.5rem;max-width:800px;margin-top:0.75rem;">
+          <input required type="checkbox" id="tos" style="margin-top:0.3rem;width:1rem;height:1rem;">
+          <span>I have read and agree to the Terms of Service *</span>
+        </label>
+      </fieldset>
+      </div>
+
+      <!-- ========== WAIVER ========== -->
+      <section id="waiverStep" hidden>
+        <hr style="margin:2rem 0;border-color:#ccc;">
+        <fieldset style="border:none;padding:0;">
+          <legend class="h3 mb-4">Liability Waiver</legend>
+          <div style="border:1px solid #e5e5e5;border-radius:0.375rem;padding:1rem;max-width:800px;max-height:320px;overflow-y:auto;font-size:0.9rem;line-height:1.45;">
+            <p><strong>StarSportsUS LLC Indoor Sports Facility / Major League Cricket Academy Philadelphia</strong></p>
+            <ol style="list-style:decimal inside;padding-left:1.25rem;margin:0;">
+              <li>This form is valid for a minimum of six months from the date of signing.</li>
+              <li>I the undersigned Participant / Parent or Guardian of the Participant recognize and acknowledge that activities at the Starsportsus LLC indoor sports facility / Major League Cricket Academy Philadelphia, could involve serious risk of injury or possibly accidental death.</li>
+              <li>I understand that there may be unforeseeable risks and such risks shall be assumed and are understood by the undersigned.</li>
+              <li>I authorize the employees, partners or Coaches of Starsportsus LLC / Major League Cricket Academy Philadelphia to call for Emergency Services for myself or my child/children. I authorize attending physician at hospital to administer necessary emergency medical care and I accept the responsibility for payment of any and all treatment provided therein including emergency rescue services.</li>
+              <li>I hereby waive, release, indemnify, absolve and hold harmless Starsportsus LLC / Major League Cricket Academy Philadelphia, the organizers, sponsors, representatives, partners, coaches, and other participants, for any claim arising out of injury or accidental death to me / my child.</li>
+              <li>I assume all risks, liabilities and hazards accidental to participating in an instructional clinic, practice sessions, bowling / pitching machine practice and / or party / function at Starsportsus LLC / Major League Cricket Academy Philadelphia.</li>
+              <li>I hereby acknowledge and agree that participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia comes with inherent risks. I have full knowledge and understanding of the inherent risks associated with participation, including but in no way limited to: (1) slips, trips, and falls, (2) athletic injuries, and (3) illness, including exposure to and infection with viruses or bacteria.</li>
+              <li>I further acknowledge that the preceding list is not inclusive of all possible risks associated with participation and that said list in no way limits the operation of this Agreement.</li>
+              <li>Coronavirus / COVID-19 Warning &amp; Disclaimer - Coronavirus, COVID-19 and its variant is an extremely contagious virus that spreads easily through person-to-person contact. Federal and state authorities recommend social distancing as a mean to prevent the spread of the virus. COVID-19 / its variant can lead to severe illness, personal injury, permanent disability, and death. Participating in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or accessing StarSportsUS / Major League Cricket Academy Philadelphia facilities could increase the risk of contracting COVID-19 / its variant. StarSportsUS / Major League Cricket Academy Philadelphia in no way warrants that COVID-19 / COVID-19 Variant infection will not occur through participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia.</li>
+              <li>I further certify that I am in good health and that I have no conditions or impairments which would preclude my safe participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or service. I hereby certify that I have read the StarSportsUS / Major League Cricket Academy Philadelphia policies and procedures related to the transmission of COVID-19 / its variant and agree to follow these as written.</li>
+              <li>I will produce proof of Vaccination if asked by any StarSportsUS or Major League Academy Philadelphia officials.</li>
+            </ol>
+          </div>
+
+          <div style="max-width:800px;margin-top:1rem;">
+            <label class="label" for="signature_name">Parent/Guardian Signature Name *</label>
+            <input id="signature_name" name="signature_name" type="text" class="field__input" required style="width:100%;">
+          </div>
+
+          <div style="max-width:800px;margin-top:1rem;">
+            <label class="label" for="signaturePad">Draw Signature *</label>
+            <canvas id="signaturePad" width="760" height="180" style="width:100%;height:180px;border:1px solid #bbb;border-radius:0.375rem;touch-action:none;background:#fff;"></canvas>
+            <div style="display:flex;justify-content:space-between;gap:1rem;margin-top:0.5rem;align-items:center;">
+              <small id="signatureHint">Use your finger, mouse, or stylus to sign.</small>
+              <button type="button" id="clearSignature" class="btn-secondary">Clear Signature</button>
+            </div>
+          </div>
+        </fieldset>
+      </section>
+
+      <!-- ========== ERROR PLACEHOLDER ========== -->
+      <div id="formError" style="color:red;margin-top:1rem;"></div>
+
+      <!-- ========== SUBMIT ========== -->
+      <div class="text-center pt-4" style="display:flex;justify-content:center;gap:1rem;flex-wrap:wrap;">
+        <button type="button" id="backToDetails" class="btn-secondary" hidden>Back</button>
+        <button type="button" id="showWaiver" class="btn-primary">Next: Review Waiver</button>
+        <button type="submit" id="submitRegistration" class="btn-primary" hidden>Checkout</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<script>
+(() => {
+  const form       = document.getElementById('coachRegForm');
+  const childWrap  = document.getElementById('childrenWrap');
+  const errorBox   = document.getElementById('formError');
+  const detailsStep = document.getElementById('detailsStep');
+  const waiverStep = document.getElementById('waiverStep');
+  const showWaiverBtn = document.getElementById('showWaiver');
+  const backToDetailsBtn = document.getElementById('backToDetails');
+  const submitRegistrationBtn = document.getElementById('submitRegistration');
+  const signatureCanvas = document.getElementById('signaturePad');
+  const signatureName = document.getElementById('signature_name');
+  const clearSignatureBtn = document.getElementById('clearSignature');
+  const proxyBase = 'https://seal-proxy-secure.onrender.com';
+  const signatureCtx = signatureCanvas.getContext('2d');
+  let signatureStarted = false;
+  let signatureDrawing = false;
+
+  signatureName.disabled = true;
+
+  function resizeSignaturePad() {
+    const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
+    const rect = signatureCanvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    signatureCanvas.width = Math.max(1, Math.floor(rect.width * ratio));
+    signatureCanvas.height = Math.max(1, Math.floor(rect.height * ratio));
+    signatureCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    signatureCtx.lineWidth = 2;
+    signatureCtx.lineCap = 'round';
+    signatureCtx.strokeStyle = '#111';
+
+    if (dataUrl) {
+      const img = new Image();
+      img.onload = () => signatureCtx.drawImage(img, 0, 0, rect.width, rect.height);
+      img.src = dataUrl;
+    }
+  }
+
+  function getSignaturePoint(event) {
+    const source = event.touches?.[0] || event.changedTouches?.[0] || event;
+    const rect = signatureCanvas.getBoundingClientRect();
+    return {
+      x: source.clientX - rect.left,
+      y: source.clientY - rect.top
+    };
+  }
+
+  function startSignature(event) {
+    event.preventDefault();
+    signatureDrawing = true;
+    signatureStarted = true;
+    const point = getSignaturePoint(event);
+    signatureCtx.beginPath();
+    signatureCtx.moveTo(point.x, point.y);
+  }
+
+  function drawSignature(event) {
+    if (!signatureDrawing) return;
+    event.preventDefault();
+    const point = getSignaturePoint(event);
+    signatureCtx.lineTo(point.x, point.y);
+    signatureCtx.stroke();
+  }
+
+  function stopSignature(event) {
+    if (!signatureDrawing) return;
+    event.preventDefault();
+    signatureDrawing = false;
+  }
+
+  function clearSignature() {
+    const rect = signatureCanvas.getBoundingClientRect();
+    signatureCtx.clearRect(0, 0, rect.width, rect.height);
+    signatureStarted = false;
+  }
+
+  signatureCanvas.addEventListener('mousedown', startSignature);
+  signatureCanvas.addEventListener('mousemove', drawSignature);
+  signatureCanvas.addEventListener('mouseup', stopSignature);
+  signatureCanvas.addEventListener('mouseleave', stopSignature);
+  signatureCanvas.addEventListener('touchstart', startSignature, { passive: false });
+  signatureCanvas.addEventListener('touchmove', drawSignature, { passive: false });
+  signatureCanvas.addEventListener('touchend', stopSignature, { passive: false });
+  clearSignatureBtn.addEventListener('click', clearSignature);
+  window.addEventListener('resize', resizeSignaturePad);
+
+  /* =====  YOUR ID MAPS  ===== */
+  const variantId = {
+    'coach-beginner'    : 45227285577899,
+    'coach-intermediate': 45227285610667
+  };
+
+  const planId = {
+    'coach-beginner': {
+      'Quarterly'   : 2112946347,
+      'Semi-Annual' : 2112913579,
+      'Annual'      : 2112880811
+    },
+    'coach-intermediate': {
+      'Quarterly'   : 2112848043,
+      'Semi-Annual' : 2112815275,
+      'Annual'      : 2112585899
+    }
+  };
+  /* ========================= */
+
+  // 2026-04-25: Registration is limited to one child per checkout.
+  function addChild() {
+  const i = 1;
+
+  const html = `
+   <div class="child-block" data-i="${i}" style="border: 1px solid #ccc; padding: 1rem; margin-top: 1rem; position: relative;">
+     <h4>Child</h4>
+     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+
+       <!-- First Name -->
+       <div>
+         <label for="child_first_${i}">First*</label>
+         <input type="text" id="child_first_${i}" name="child_first_${i}" required style="width:100%;">
+       </div>
+
+       <!-- Last Name -->
+       <div>
+         <label for="child_last_${i}">Last*</label>
+         <input type="text" id="child_last_${i}" name="child_last_${i}" required style="width:100%;">
+       </div>
+
+       <!-- DOB -->
+       <div>
+         <label for="child_dob_${i}">DOB*</label>
+         <input type="date" id="child_dob_${i}" name="child_dob_${i}" required style="width:100%;">
+       </div>
+
+       <!-- CricClub ID -->
+       <div>
+         <label for="child_cricclub_${i}">CricClub ID</label>
+         <input type="text" id="child_cricclub_${i}" name="child_cricclub_${i}" style="width:100%;">
+       </div>
+
+       <!-- Program -->
+       <div>
+         <label for="child_program_${i}">Program*</label>
+         <select id="child_program_${i}" name="child_program_${i}" required style="width:100%;">
+           <option value="">--</option>
+           <option value="coach-beginner">Beginner</option>
+           <option value="coach-intermediate">Intermediate</option>
+         </select>
+       </div>
+
+       <!-- Interval -->
+       <div>
+         <label for="child_interval_${i}">Interval*</label>
+         <select id="child_interval_${i}" name="child_interval_${i}" required style="width:100%;">
+           <option value="">--</option>
+           <option value="Quarterly">Quarterly</option>
+           <option value="Semi-Annual">Semi-Annual</option>
+           <option value="Annual">Annual</option>
+         </select>
+       </div>
+
+     </div>
+   </div>`;
+
+  childWrap.insertAdjacentHTML('beforeend', html);
+}
+
+  addChild();
+
+  function collectRegistrationData() {
+    /* parent props shared on ALL line-items */
+    const parentProps = {
+      'Parent First Name': form.parent_first.value.trim(),
+      'Parent Last Name' : form.parent_last.value.trim(),
+      'Parent Mobile'    : form.mobile.value.trim(),
+      'Parent Email'     : form.email.value.trim(),
+      'Parent Address1'  : form.address1.value.trim(),
+      'Parent Address2'  : form.address2.value.trim(),
+      'Parent City'      : form.city.value.trim(),
+      'Parent State'     : form.state.value.trim(),
+      'Parent Zip'       : form.zip.value.trim(),
+      'Emergency Contact Name': form.emergency_contact_name.value.trim(),
+      'Emergency Contact Phone': form.emergency_contact_phone.value.trim()
+    };
+
+    /* build one cart item per child */
+    const lineItems = [];
+    const waiverChildren = [];
+
+    for (const block of childWrap.children) {
+      const i = block.dataset.i;
+
+      const prog = form[`child_program_${i}`].value;
+      const intv = form[`child_interval_${i}`].value;
+
+      const varId = variantId[prog];
+      const spId = planId[prog]?.[intv];
+
+      if (!varId || !spId) {
+        throw new Error(`Invalid program or interval on child #${i}`);
+      }
+
+      lineItems.push({
+        id: varId,
+        quantity: 1,
+        selling_plan: spId,
+        properties: {
+          ...parentProps,
+          'Child First Name': form[`child_first_${i}`].value.trim(),
+          'Child Last Name': form[`child_last_${i}`].value.trim(),
+          'Child DOB': form[`child_dob_${i}`].value,
+          'Child CricClub ID': form[`child_cricclub_${i}`].value.trim(),
+          'Program Level': prog,
+          'Billing Interval': intv
+        }
+      });
+
+      waiverChildren.push({
+        first_name: form[`child_first_${i}`].value.trim(),
+        last_name: form[`child_last_${i}`].value.trim(),
+        dob: form[`child_dob_${i}`].value,
+        cricclub_id: form[`child_cricclub_${i}`].value.trim(),
+        program: prog === 'coach-beginner' ? 'Beginner' : 'Intermediate',
+        billing_interval: intv
+      });
+    }
+
+    return {
+      lineItems,
+      waiver: {
+        parent_first_name: parentProps['Parent First Name'],
+        parent_last_name: parentProps['Parent Last Name'],
+        parent_mobile: parentProps['Parent Mobile'],
+        parent_email: parentProps['Parent Email'],
+        parent_address1: parentProps['Parent Address1'],
+        parent_address2: parentProps['Parent Address2'],
+        parent_city: parentProps['Parent City'],
+        parent_state: parentProps['Parent State'],
+        parent_zip: parentProps['Parent Zip'],
+        emergency_contact_name: parentProps['Emergency Contact Name'],
+        emergency_contact_phone: parentProps['Emergency Contact Phone'],
+        children: waiverChildren
+      }
+    };
+  }
+
+  showWaiverBtn.addEventListener('click', () => {
+    errorBox.textContent = '';
+
+    if (!form.checkValidity()) return form.reportValidity();
+
+    if (!form.tos.checked) {
+      errorBox.textContent = 'Please agree to the terms.';
+      return;
+    }
+
+    detailsStep.hidden = true;
+    waiverStep.hidden = false;
+    showWaiverBtn.hidden = true;
+    backToDetailsBtn.hidden = false;
+    submitRegistrationBtn.hidden = false;
+    signatureName.disabled = false;
+    resizeSignaturePad();
+    window.scrollTo({ top: waiverStep.offsetTop - 20, behavior: 'smooth' });
+  });
+
+  backToDetailsBtn.addEventListener('click', () => {
+    errorBox.textContent = '';
+    detailsStep.hidden = false;
+    waiverStep.hidden = true;
+    showWaiverBtn.hidden = false;
+    backToDetailsBtn.hidden = true;
+    submitRegistrationBtn.hidden = true;
+    signatureName.disabled = true;
+    window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
+  });
+
+  form.onsubmit = async e => {
+    e.preventDefault();
+    errorBox.textContent = '';
+
+    if (waiverStep.hidden) return;
+    if (!form.checkValidity()) return form.reportValidity();
+    if (!signatureStarted) {
+      errorBox.textContent = 'Please draw your signature before checkout.';
+      return;
+    }
+
+    const { lineItems, waiver } = collectRegistrationData();
+    waiver.signature_name = signatureName.value.trim();
+    waiver.signature_data_url = signatureCanvas.toDataURL('image/png');
+
+    try {
+      submitRegistrationBtn.disabled = true;
+      submitRegistrationBtn.textContent = 'Creating Waiver...';
+
+      const waiverResp = await fetch(`${proxyBase}/coaching-waiver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(waiver)
+      });
+
+      const waiverResult = await waiverResp.json().catch(() => ({}));
+      if (!waiverResp.ok || !waiverResult.success) {
+        throw new Error(waiverResult.error || 'Waiver email failed');
+      }
+
+      lineItems.forEach(item => {
+        item.properties = {
+          ...item.properties,
+          'Waiver ID': waiverResult.waiver_id
+        };
+      });
+
+      submitRegistrationBtn.textContent = 'Adding to Cart...';
+      const resp = await fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: lineItems })
+      });
+
+      if (!resp.ok) throw new Error('Cart add failed');
+
+      location.href = '/checkout';
+    } catch (err) {
+      errorBox.textContent = err.message || 'Unexpected error, try again.';
+      submitRegistrationBtn.disabled = false;
+      submitRegistrationBtn.textContent = 'Checkout';
+    }
+  };
+})();
+</script>
+
+<style>
+  /* Basic spacing and styles for the form */
+  .label {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    display: block;
+  }
+
+  .field__input {
+    border: 1px solid #ccc;
+    padding: 0.375rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 1rem;
+  }
+
+  button.btn-primary {
+    background-color: #2a9d8f;
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1.125rem;
+  }
+
+  button.btn-primary:hover {
+    background-color: #21867a;
+  }
+
+  button.btn-secondary {
+    background-color: #e9ecef;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  button.btn-secondary:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+  }
+</style>

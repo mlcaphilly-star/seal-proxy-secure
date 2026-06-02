@@ -5,6 +5,7 @@ const fetch = require('node-fetch');
 const cors = require('cors');
 const helmet = require('helmet');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -102,7 +103,25 @@ pool.connect()
 
 app.use(helmet());
 app.use(cors({ origin: ALLOWED_ORIGIN }));
-app.use(express.json());
+
+const handleShopifyOrderWebhook = async (req, res) => {
+  try {
+    if (!isValidShopifyWebhook(req)) {
+      return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
+    }
+
+    const order = JSON.parse(req.body.toString('utf8'));
+    const result = await finalizeCoachingWaiversForPaidOrder(order);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Error processing Shopify order paid webhook:', err);
+    return res.status(500).json({ success: false, error: 'Webhook processing failed' });
+  }
+};
+
+app.post('/shopify/order-paid', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
+app.post('/shopify/order-created', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
+app.use(express.json({ limit: '2mb' }));
 
 // Initialize DB table if not exists (keeps schema similar to your SQLite original)
 const createTableSQL = `
@@ -218,6 +237,41 @@ pool.query('CREATE INDEX IF NOT EXISTS idx_batch_assignment_subscription_dates O
 pool.query('CREATE INDEX IF NOT EXISTS idx_batch_assignment_batch_id ON batch_assignment(batch_id)')
   .then(() => console.log('batch_assignment batch_id index ready'))
   .catch(err => console.error('Error creating batch_assignment batch_id index:', err));
+
+const createCoachingWaiversTableSQL = `
+CREATE TABLE IF NOT EXISTS coaching_waivers (
+  waiver_id TEXT PRIMARY KEY,
+  subscription_id TEXT,
+  order_id TEXT,
+  order_name TEXT,
+  customer_email TEXT NOT NULL,
+  parent_first_name TEXT NOT NULL,
+  parent_last_name TEXT NOT NULL,
+  participant_name TEXT,
+  emergency_contact_name TEXT NOT NULL,
+  emergency_contact_phone TEXT NOT NULL,
+  client_ip TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_checkout',
+  waiver_payload JSONB NOT NULL,
+  pdf BYTEA NOT NULL,
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  emailed_at TIMESTAMPTZ,
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createCoachingWaiversTableSQL)
+  .then(() => console.log('coaching_waivers table ready'))
+  .catch(err => console.error('Error creating coaching_waivers table:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_waivers_subscription_id ON coaching_waivers(subscription_id)')
+  .then(() => console.log('coaching_waivers subscription index ready'))
+  .catch(err => console.error('Error creating coaching_waivers subscription index:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_waivers_email_status ON coaching_waivers(customer_email, status)')
+  .then(() => console.log('coaching_waivers email/status index ready'))
+  .catch(err => console.error('Error creating coaching_waivers email/status index:', err));
 
 // Root
 app.get('/', (req, res) => {
@@ -1809,7 +1863,335 @@ app.get('/vacations', async (req, res) => {
 
 // SG Mail
 const sgMail = require('@sendgrid/mail');
+const PDFDocument = require('pdfkit');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+const escapeHtml = (value = '') =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const getClientIpAddress = (req) => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (forwardedFor) return String(forwardedFor).split(',')[0].trim();
+  return req.headers['x-real-ip'] || req.ip || req.socket?.remoteAddress || '';
+};
+
+const COACHING_WAIVER_TITLE = 'StarSportsUS LLC Indoor Sports Facility / Major League Cricket Academy Philadelphia';
+const COACHING_WAIVER_ITEMS = [
+  'This form is valid for a minimum of six months from the date of signing.',
+  'I the undersigned Participant / Parent or Guardian of the Participant recognize and acknowledge that activities at the Starsportsus LLC indoor sports facility / Major League Cricket Academy Philadelphia, could involve serious risk of injury or possibly accidental death.',
+  'I understand that there may be unforeseeable risks and such risks shall be assumed and are understood by the undersigned.',
+  'I authorize the employees, partners or Coaches of Starsportsus LLC / Major League Cricket Academy Philadelphia to call for Emergency Services for myself or my child/children. I authorize attending physician at hospital to administer necessary emergency medical care and I accept the responsibility for payment of any and all treatment provided therein including emergency rescue services.',
+  'I hereby waive, release, indemnify, absolve and hold harmless Starsportsus LLC / Major League Cricket Academy Philadelphia, the organizers, sponsors, representatives, partners, coaches, and other participants, for any claim arising out of injury or accidental death to me / my child.',
+  'I assume all risks, liabilities and hazards accidental to participating in an instructional clinic, practice sessions, bowling / pitching machine practice and / or party / function at Starsportsus LLC / Major League Cricket Academy Philadelphia.',
+  'I hereby acknowledge and agree that participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia comes with inherent risks. I have full knowledge and understanding of the inherent risks associated with participation, including but in no way limited to: (1) slips, trips, and falls, (2) athletic injuries, and (3) illness, including exposure to and infection with viruses or bacteria.',
+  'I further acknowledge that the preceding list is not inclusive of all possible risks associated with participation and that said list in no way limits the operation of this Agreement.',
+  'Coronavirus / COVID-19 Warning & Disclaimer - Coronavirus, COVID-19 and its variant is an extremely contagious virus that spreads easily through person-to-person contact. Federal and state authorities recommend social distancing as a mean to prevent the spread of the virus. COVID-19 / its variant can lead to severe illness, personal injury, permanent disability, and death. Participating in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or accessing StarSportsUS / Major League Cricket Academy Philadelphia facilities could increase the risk of contracting COVID-19 / its variant. StarSportsUS / Major League Cricket Academy Philadelphia in no way warrants that COVID-19 / COVID-19 Variant infection will not occur through participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia.',
+  'I further certify that I am in good health and that I have no conditions or impairments which would preclude my safe participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or service. I hereby certify that I have read the StarSportsUS / Major League Cricket Academy Philadelphia policies and procedures related to the transmission of COVID-19 / its variant and agree to follow these as written.',
+  'I will produce proof of Vaccination if asked by any StarSportsUS or Major League Academy Philadelphia officials.'
+];
+
+function isValidShopifyWebhook(req) {
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
+  const hmac = req.headers['x-shopify-hmac-sha256'];
+
+  if (!secret || !hmac || !Buffer.isBuffer(req.body)) return false;
+
+  const digest = crypto
+    .createHmac('sha256', secret)
+    .update(req.body)
+    .digest('base64');
+
+  const digestBuffer = Buffer.from(digest);
+  const hmacBuffer = Buffer.from(String(hmac));
+  return digestBuffer.length === hmacBuffer.length && crypto.timingSafeEqual(digestBuffer, hmacBuffer);
+}
+
+const getOrderLineProperty = (lineItem = {}, key) => {
+  const searchKey = key.trim().toLowerCase();
+  const properties = lineItem.properties || [];
+
+  if (Array.isArray(properties)) {
+    const match = properties.find(prop =>
+      String(prop.name || prop.key || '').trim().toLowerCase() === searchKey
+    );
+    return match?.value || '';
+  }
+
+  if (properties && typeof properties === 'object') {
+    const matchKey = Object.keys(properties).find(propKey =>
+      propKey.trim().toLowerCase() === searchKey
+    );
+    return matchKey ? properties[matchKey] : '';
+  }
+
+  return '';
+};
+
+const getPaidOrderCustomerEmail = (order = {}) =>
+  order.email || order.customer?.email || order.contact_email || '';
+
+async function savePendingCoachingWaiver(waiver, pdfBuffer) {
+  const waiverId = crypto.randomUUID();
+  const childNames = (waiver.children || [])
+    .map(child => `${child.first_name || ''} ${child.last_name || ''}`.trim())
+    .filter(Boolean);
+  const payloadForStorage = { ...waiver };
+  delete payloadForStorage.signature_data_url;
+
+  await pool.query(
+    `
+      INSERT INTO coaching_waivers (
+        waiver_id,
+        customer_email,
+        parent_first_name,
+        parent_last_name,
+        participant_name,
+        emergency_contact_name,
+        emergency_contact_phone,
+        client_ip,
+        status,
+        waiver_payload,
+        pdf,
+        submitted_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_checkout', $9::jsonb, $10, $11)
+    `,
+    [
+      waiverId,
+      waiver.parent_email,
+      waiver.parent_first_name,
+      waiver.parent_last_name,
+      childNames.join(', '),
+      waiver.emergency_contact_name,
+      waiver.emergency_contact_phone,
+      waiver.client_ip,
+      JSON.stringify(payloadForStorage),
+      pdfBuffer,
+      waiver.submitted_at
+    ]
+  );
+
+  return waiverId;
+}
+
+async function markCoachingWaiverEmailed(waiverId) {
+  await pool.query(
+    'UPDATE coaching_waivers SET emailed_at = NOW(), updated_at = NOW() WHERE waiver_id = $1',
+    [waiverId]
+  );
+}
+
+async function findSubscriptionIdForOrderLine(order, lineItem) {
+  const email = getPaidOrderCustomerEmail(order);
+  const childFirstName = getOrderLineProperty(lineItem, 'Child First Name');
+  const childLastName = getOrderLineProperty(lineItem, 'Child Last Name');
+  const childDob = getOrderLineProperty(lineItem, 'Child DOB');
+
+  if (!email || !childFirstName || !childLastName) return '';
+
+  try {
+    const searchRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?query=${encodeURIComponent(email)}`, {
+      headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' },
+    });
+
+    if (!searchRes.ok) return '';
+
+    const searchData = await searchRes.json();
+    const subscriptions = searchData.payload?.subscriptions || [];
+
+    for (const sub of subscriptions) {
+      const detail = await fetchSealSubscriptionDetail(sub.id);
+      const items = detail.items || detail.payload?.items || [];
+
+      for (const item of items) {
+        const props = item.properties || item.product_properties || [];
+        const firstName = getItemProperty(props, 'Child First Name');
+        const lastName = getItemProperty(props, 'Child Last Name');
+        const dob = getItemProperty(props, 'Child DOB');
+
+        if (
+          normalizeSearchText(firstName) === normalizeSearchText(childFirstName) &&
+          normalizeSearchText(lastName) === normalizeSearchText(childLastName) &&
+          (!childDob || !dob || String(dob).slice(0, 10) === String(childDob).slice(0, 10))
+        ) {
+          return String(sub.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Unable to match waiver to Seal subscription:', err);
+  }
+
+  return '';
+}
+
+async function finalizeCoachingWaiversForPaidOrder(order) {
+  const financialStatus = String(order.financial_status || '').toLowerCase();
+  const paymentStatus = String(order.payment_status || '').toLowerCase();
+  const isPaid = ['paid', 'partially_paid'].includes(financialStatus) || ['paid', 'partially_paid'].includes(paymentStatus);
+
+  if (!isPaid) {
+    return {
+      skipped: true,
+      reason: `Order is not paid yet. financial_status=${financialStatus || 'unknown'}`
+    };
+  }
+
+  const lineItems = order.line_items || [];
+  const matchedWaiverIds = [];
+
+  for (const lineItem of lineItems) {
+    const waiverId = getOrderLineProperty(lineItem, 'Waiver ID') || getOrderLineProperty(lineItem, '_Waiver ID');
+    if (!waiverId) continue;
+
+    const subscriptionId = await findSubscriptionIdForOrderLine(order, lineItem);
+
+    await pool.query(
+      `
+        UPDATE coaching_waivers
+        SET
+          subscription_id = COALESCE(NULLIF($2, ''), subscription_id),
+          order_id = $3,
+          order_name = $4,
+          status = 'paid',
+          paid_at = NOW(),
+          updated_at = NOW()
+        WHERE waiver_id = $1
+      `,
+      [
+        waiverId,
+        subscriptionId,
+        String(order.id || ''),
+        String(order.name || order.order_number || '')
+      ]
+    );
+
+    matchedWaiverIds.push(waiverId);
+  }
+
+  return { matched_waiver_ids: matchedWaiverIds };
+}
+
+const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
+  const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+  const chunks = [];
+
+  doc.on('data', chunk => chunks.push(chunk));
+  doc.on('error', reject);
+  doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+  const children = Array.isArray(waiver.children) ? waiver.children : [];
+  const submittedAt = waiver.submitted_at || new Date().toISOString();
+
+  doc.fontSize(18).text('Liability Waiver', { align: 'center' });
+  doc.moveDown();
+  doc.fontSize(10).text(`Submitted: ${new Date(submittedAt).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET`);
+  doc.text(`Client IP Address: ${waiver.client_ip || ''}`);
+  doc.moveDown();
+
+  doc.fontSize(13).text('Guardian Information', { underline: true });
+  doc.fontSize(10)
+    .text(`Name: ${waiver.parent_first_name || ''} ${waiver.parent_last_name || ''}`)
+    .text(`Email: ${waiver.parent_email || ''}`)
+    .text(`Mobile: ${waiver.parent_mobile || ''}`)
+    .text(`Address: ${[waiver.parent_address1, waiver.parent_address2, waiver.parent_city, waiver.parent_state, waiver.parent_zip].filter(Boolean).join(', ')}`)
+    .text(`Emergency Contact: ${waiver.emergency_contact_name || ''} ${waiver.emergency_contact_phone ? `(${waiver.emergency_contact_phone})` : ''}`);
+  doc.moveDown();
+
+  doc.fontSize(13).text('Participant Information', { underline: true });
+  children.forEach((child, index) => {
+    doc.fontSize(10).text(`${index + 1}. ${child.first_name || ''} ${child.last_name || ''} | DOB: ${child.dob || ''} | Program: ${child.program || ''} | Billing: ${child.billing_interval || ''}`);
+  });
+  doc.moveDown();
+
+  doc.fontSize(13).text('Waiver Agreement', { underline: true });
+  doc.fontSize(10).text(COACHING_WAIVER_TITLE, { align: 'left' });
+  doc.moveDown(0.5);
+  COACHING_WAIVER_ITEMS.forEach((item, index) => {
+    doc.text(`${index + 1}. ${item}`, { align: 'left' });
+    doc.moveDown(0.35);
+  });
+  doc.moveDown();
+
+  doc.fontSize(13).text('Signature', { underline: true });
+  doc.fontSize(10).text(`Signed Name: ${waiver.signature_name || ''}`);
+  doc.text(`Signed At: ${new Date(submittedAt).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET`);
+  doc.moveDown(0.5);
+
+  if (waiver.signature_data_url) {
+    const signatureBuffer = Buffer.from(String(waiver.signature_data_url).replace(/^data:image\/png;base64,/, ''), 'base64');
+    doc.image(signatureBuffer, { fit: [250, 100] });
+  }
+
+  doc.end();
+});
+
+async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
+  const childNames = (waiver.children || [])
+    .map(child => `${child.first_name || ''} ${child.last_name || ''}`.trim())
+    .filter(Boolean)
+    .join(', ');
+
+  const html = `
+    <p>Hi ${escapeHtml(waiver.parent_first_name || '')},</p>
+    <p>Attached is a copy of your signed coaching waiver${childNames ? ` for ${escapeHtml(childNames)}` : ''}.</p>
+    <p>Client IP Address captured at signing: ${escapeHtml(waiver.client_ip || '')}</p>
+    <p>Thank you,<br>MLCA Coaching</p>
+  `;
+
+  await sgMail.send({
+    to: toEmail,
+    from: process.env.EMAIL_FROM,
+    subject: 'Signed Coaching Waiver',
+    html,
+    attachments: [{
+      content: pdfBuffer.toString('base64'),
+      filename: 'mlca-coaching-waiver.pdf',
+      type: 'application/pdf',
+      disposition: 'attachment'
+    }]
+  });
+}
+
+app.post('/coaching-waiver', async (req, res) => {
+  const waiver = {
+    ...req.body,
+    client_ip: getClientIpAddress(req),
+    submitted_at: new Date().toISOString()
+  };
+
+  if (!waiver.parent_first_name || !waiver.parent_last_name || !waiver.parent_email || !waiver.parent_mobile) {
+    return res.status(400).json({ success: false, error: 'Missing required parent information.' });
+  }
+
+  if (!waiver.emergency_contact_name || !waiver.emergency_contact_phone) {
+    return res.status(400).json({ success: false, error: 'Missing emergency contact information.' });
+  }
+
+  if (!Array.isArray(waiver.children) || waiver.children.length === 0) {
+    return res.status(400).json({ success: false, error: 'Missing participant information.' });
+  }
+
+  if (!waiver.signature_name || !/^data:image\/png;base64,/.test(String(waiver.signature_data_url || ''))) {
+    return res.status(400).json({ success: false, error: 'Missing signature.' });
+  }
+
+  try {
+    const pdfBuffer = await buildCoachingWaiverPdf(waiver);
+    const waiverId = await savePendingCoachingWaiver(waiver, pdfBuffer);
+    await sendCoachingWaiverEmail(waiver.parent_email, pdfBuffer, waiver);
+    await markCoachingWaiverEmailed(waiverId);
+    return res.json({ success: true, waiver_id: waiverId });
+  } catch (err) {
+    console.error('Error creating coaching waiver PDF:', err);
+    return res.status(500).json({ success: false, error: 'Unable to create and email waiver PDF.' });
+  }
+});
 
 async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
   const rowsHtml = updatedBillingAttempts.map(attempt => `
