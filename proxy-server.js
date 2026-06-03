@@ -1509,7 +1509,13 @@ app.get('/admin/trial-sessions', async (req, res) => {
           ts.participant_dob::text,
           ts.trial_date::text,
           b.batch_name,
-          l.location_name
+          l.location_name,
+          l.address_1 AS location_address_1,
+          l.address_2 AS location_address_2,
+          l.city AS location_city,
+          l.state AS location_state,
+          l.zip AS location_zip,
+          l.country AS location_country
         FROM trial_sessions ts
         LEFT JOIN batches b ON b.batch_id = ts.batch_id
         LEFT JOIN locations l ON l.location_id = ts.location_id
@@ -1563,7 +1569,18 @@ app.get('/admin/trial-sessions-pending-customer-email', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `
-        SELECT ts.*, ts.participant_dob::text, ts.trial_date::text, b.batch_name, l.location_name
+        SELECT
+          ts.*,
+          ts.participant_dob::text,
+          ts.trial_date::text,
+          b.batch_name,
+          l.location_name,
+          l.address_1 AS location_address_1,
+          l.address_2 AS location_address_2,
+          l.city AS location_city,
+          l.state AS location_state,
+          l.zip AS location_zip,
+          l.country AS location_country
         FROM trial_sessions ts
         LEFT JOIN batches b ON b.batch_id = ts.batch_id
         LEFT JOIN locations l ON l.location_id = ts.location_id
@@ -1588,7 +1605,18 @@ app.get('/admin/trial-sessions-today-for-coaches', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `
-        SELECT ts.*, ts.participant_dob::text, ts.trial_date::text, b.batch_name, l.location_name
+        SELECT
+          ts.*,
+          ts.participant_dob::text,
+          ts.trial_date::text,
+          b.batch_name,
+          l.location_name,
+          l.address_1 AS location_address_1,
+          l.address_2 AS location_address_2,
+          l.city AS location_city,
+          l.state AS location_state,
+          l.zip AS location_zip,
+          l.country AS location_country
         FROM trial_sessions ts
         LEFT JOIN batches b ON b.batch_id = ts.batch_id
         LEFT JOIN locations l ON l.location_id = ts.location_id
