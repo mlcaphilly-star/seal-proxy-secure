@@ -6,11 +6,14 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SEAL_TOKEN = process.env.SEAL_TOKEN;
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
+const COACHING_ENROLLMENT_GUIDE_PATH = path.join(__dirname, 'assets', 'coaching-enrollment-user-guide-v2.pdf');
 
 const isActiveSubscription = (subscription = {}) =>
   (subscription.status || '').toUpperCase() === 'ACTIVE';
@@ -146,6 +149,7 @@ const handleShopifyOrderWebhook = async (req, res) => {
 app.post('/shopify/order-paid', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
 app.post('/shopify/order-created', express.raw({ type: 'application/json' }), handleShopifyOrderWebhook);
 app.use(express.json({ limit: '8mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 // Initialize DB table if not exists (keeps schema similar to your SQLite original)
 const createTableSQL = `
@@ -326,9 +330,13 @@ CREATE TABLE IF NOT EXISTS trial_sessions (
   trial_time TEXT,
   trial_end_time TEXT,
   recommended_batch_ids INT[],
+  recommended_program_level TEXT,
   coach_notes TEXT,
+  coach_form_token TEXT,
   customer_email_sent_at TIMESTAMPTZ,
   coach_email_sent_at TIMESTAMPTZ,
+  coach_recommendations_submitted_at TIMESTAMPTZ,
+  parent_batch_offer_email_sent_at TIMESTAMPTZ,
   paid_at TIMESTAMPTZ,
   converted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -339,6 +347,22 @@ pool.query(createTrialSessionsTableSQL)
   .then(() => console.log('trial_sessions table ready'))
   .catch(err => console.error('Error creating trial_sessions table:', err));
 
+pool.query('ALTER TABLE trial_sessions ADD COLUMN IF NOT EXISTS coach_form_token TEXT')
+  .then(() => console.log('trial_sessions coach_form_token column ready'))
+  .catch(err => console.error('Error creating trial_sessions coach_form_token column:', err));
+
+pool.query('ALTER TABLE trial_sessions ADD COLUMN IF NOT EXISTS recommended_program_level TEXT')
+  .then(() => console.log('trial_sessions recommended_program_level column ready'))
+  .catch(err => console.error('Error creating trial_sessions recommended_program_level column:', err));
+
+pool.query('ALTER TABLE trial_sessions ADD COLUMN IF NOT EXISTS coach_recommendations_submitted_at TIMESTAMPTZ')
+  .then(() => console.log('trial_sessions coach_recommendations_submitted_at column ready'))
+  .catch(err => console.error('Error creating trial_sessions coach_recommendations_submitted_at column:', err));
+
+pool.query('ALTER TABLE trial_sessions ADD COLUMN IF NOT EXISTS parent_batch_offer_email_sent_at TIMESTAMPTZ')
+  .then(() => console.log('trial_sessions parent_batch_offer_email_sent_at column ready'))
+  .catch(err => console.error('Error creating trial_sessions parent_batch_offer_email_sent_at column:', err));
+
 pool.query('CREATE INDEX IF NOT EXISTS idx_trial_sessions_email_status ON trial_sessions(customer_email, status, converted_to_coaching)')
   .then(() => console.log('trial_sessions email/status index ready'))
   .catch(err => console.error('Error creating trial_sessions email/status index:', err));
@@ -347,9 +371,34 @@ pool.query('CREATE INDEX IF NOT EXISTS idx_trial_sessions_batch_date ON trial_se
   .then(() => console.log('trial_sessions batch/date index ready'))
   .catch(err => console.error('Error creating trial_sessions batch/date index:', err));
 
+pool.query('CREATE INDEX IF NOT EXISTS idx_trial_sessions_coach_form_token ON trial_sessions(coach_form_token)')
+  .then(() => console.log('trial_sessions coach form token index ready'))
+  .catch(err => console.error('Error creating trial_sessions coach form token index:', err));
+
 // Root
 app.get('/', (req, res) => {
   res.send('Seal Proxy Secure Server is running! ✅');
+});
+
+app.get('/coaching-enrollment-user-guide.pdf', (req, res) => {
+  if (!fs.existsSync(COACHING_ENROLLMENT_GUIDE_PATH)) {
+    return res.status(404).send('Coaching enrollment guide not found.');
+  }
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="coaching-enrollment-user-guide.pdf"`
+  );
+  return res.sendFile(COACHING_ENROLLMENT_GUIDE_PATH);
+});
+
+app.get('/coaching-enrollment-user-guide/download', (req, res) => {
+  if (!fs.existsSync(COACHING_ENROLLMENT_GUIDE_PATH)) {
+    return res.status(404).send('Coaching enrollment guide not found.');
+  }
+
+  return res.download(COACHING_ENROLLMENT_GUIDE_PATH, 'coaching-enrollment-user-guide.pdf');
 });
 
 // -------------------- Seal Subscriptions (by email) --------------------
@@ -1449,6 +1498,7 @@ app.get('/trial/pending', async (req, res) => {
           ts.trial_time,
           ts.trial_end_time,
           ts.recommended_batch_ids,
+          ts.recommended_program_level,
           ts.coach_notes,
           b.batch_name,
           l.location_name
@@ -1536,30 +1586,98 @@ app.get('/admin/trial-sessions', async (req, res) => {
 app.put('/coach/trial-sessions/:trialSessionId/recommendations', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
-  const recommendedBatchIds = (req.body.recommended_batch_ids || [])
+  const rawRecommendedBatchIds = Array.isArray(req.body.recommended_batch_ids)
+    ? req.body.recommended_batch_ids
+    : [req.body.recommended_batch_ids];
+  const recommendedBatchIds = rawRecommendedBatchIds
     .map(id => Number(id))
     .filter(id => Number.isInteger(id) && id > 0)
     .slice(0, 4);
+  const recommendedProgramLevel = String(req.body.recommended_program_level || '').trim();
   const coachNotes = String(req.body.coach_notes || '').trim();
 
   try {
-    const { rows } = await pool.query(
-      `
-        UPDATE trial_sessions
-        SET recommended_batch_ids = $2::int[],
-            coach_notes = $3,
-            updated_at = NOW()
-        WHERE trial_session_id = $1
-        RETURNING trial_session_id, recommended_batch_ids, coach_notes
-      `,
-      [req.params.trialSessionId, recommendedBatchIds, coachNotes || null]
-    );
+    const trialSession = await saveTrialCoachRecommendations(req.params.trialSessionId, recommendedBatchIds, recommendedProgramLevel, coachNotes);
+    if (!trialSession) return res.status(404).json({ success: false, error: 'Trial session not found.' });
 
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Trial session not found.' });
-    return res.json({ success: true, trial_session: rows[0] });
+    let parentEmailResult = null;
+    try {
+      parentEmailResult = await sendParentBatchOfferEmail(req, req.params.trialSessionId);
+    } catch (emailErr) {
+      console.error('Parent batch offer email error:', emailErr);
+      parentEmailResult = { success: false, error: emailErr.message || 'Failed to send parent email.' };
+    }
+
+    return res.json({ success: true, trial_session: trialSession, parent_email: parentEmailResult });
   } catch (err) {
     console.error('Trial recommendations error:', err);
-    return res.status(500).json({ success: false, error: 'Failed to save trial recommendations.' });
+    return res.status(400).json({ success: false, error: err.message || 'Failed to save trial recommendations.' });
+  }
+});
+
+app.get('/coach/trial-sessions/:trialSessionId/recommendations-form', async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) return res.status(403).send('Missing form token.');
+
+  try {
+    const trialSession = await getTrialSessionForCoachForm(req.params.trialSessionId, token);
+    if (!trialSession) return res.status(404).send('Trial session not found or link is invalid.');
+
+    const batches = await getExistingBatchOptions();
+    return res.send(renderTrialCoachRecommendationForm({ trialSession, batches, token }));
+  } catch (err) {
+    console.error('Trial recommendation form error:', err);
+    return res.status(500).send('Unable to load recommendation form.');
+  }
+});
+
+app.post('/coach/trial-sessions/:trialSessionId/recommendations-form', async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) return res.status(403).send('Missing form token.');
+
+  try {
+    const trialSession = await getTrialSessionForCoachForm(req.params.trialSessionId, token);
+    if (!trialSession) return res.status(404).send('Trial session not found or link is invalid.');
+
+    const rawIds = Array.isArray(req.body.recommended_batch_ids)
+      ? req.body.recommended_batch_ids
+      : [req.body.recommended_batch_ids];
+    const recommendedProgramLevel = String(req.body.recommended_program_level || '').trim();
+    const coachNotes = String(req.body.coach_notes || '').trim();
+    const updated = await saveTrialCoachRecommendations(req.params.trialSessionId, rawIds, recommendedProgramLevel, coachNotes);
+    let successMessage = 'Recommendations saved.';
+    try {
+      const parentEmailResult = await sendParentBatchOfferEmail(req, req.params.trialSessionId);
+      successMessage = parentEmailResult?.skipped
+        ? 'Recommendations saved. Parent email was already sent earlier.'
+        : 'Recommendations saved and parent email sent.';
+    } catch (emailErr) {
+      console.error('Parent batch offer email error:', emailErr);
+      successMessage = `Recommendations saved, but parent email could not be sent: ${emailErr.message || 'unknown error'}`;
+    }
+    const batches = await getExistingBatchOptions();
+
+    return res.send(renderTrialCoachRecommendationForm({
+      trialSession: { ...trialSession, ...updated },
+      batches,
+      token,
+      successMessage
+    }));
+  } catch (err) {
+    console.error('Trial recommendation form submit error:', err);
+
+    try {
+      const trialSession = await getTrialSessionForCoachForm(req.params.trialSessionId, token);
+      const batches = await getExistingBatchOptions();
+      return res.status(400).send(renderTrialCoachRecommendationForm({
+        trialSession: trialSession || { trial_session_id: req.params.trialSessionId },
+        batches,
+        token,
+        errorMessage: err.message || 'Unable to save recommendations.'
+      }));
+    } catch {
+      return res.status(400).send(err.message || 'Unable to save recommendations.');
+    }
   }
 });
 
@@ -1631,6 +1749,115 @@ app.get('/admin/trial-sessions-today-for-coaches', async (req, res) => {
   } catch (err) {
     console.error('Trial coach email poll error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load today trial sessions.' });
+  }
+});
+
+app.get('/admin/trial-sessions-completed-pending-coach-assignment-email', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const today = req.query.date || getDateStringInTimeZone(new Date());
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          ts.*,
+          ts.participant_dob::text,
+          ts.trial_date::text,
+          b.batch_name,
+          l.location_name,
+          l.address_1 AS location_address_1,
+          l.address_2 AS location_address_2,
+          l.city AS location_city,
+          l.state AS location_state,
+          l.zip AS location_zip,
+          l.country AS location_country
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        WHERE ts.status = 'paid'
+          AND ts.converted_to_coaching = false
+          AND ts.coach_email_sent_at IS NULL
+          AND ts.trial_date <= $1::date
+        ORDER BY ts.trial_date ASC, ts.trial_time ASC, ts.created_at ASC
+        LIMIT 50
+      `,
+      [today]
+    );
+    return res.json({ success: true, date: today, trial_sessions: rows });
+  } catch (err) {
+    console.error('Trial completed coach assignment email poll error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load completed trial sessions pending coach assignment email.' });
+  }
+});
+
+app.post('/admin/trial-sessions/send-coach-assignment-emails', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const today = req.body.date || req.query.date || getDateStringInTimeZone(new Date());
+  const rawRequestedIds = Array.isArray(req.body.trial_session_ids)
+    ? req.body.trial_session_ids
+    : [req.body.trial_session_ids];
+  const requestedIds = rawRequestedIds
+    .map(id => String(id).trim())
+    .filter(Boolean);
+  const params = [today];
+  const idFilter = requestedIds.length ? 'AND ts.trial_session_id = ANY($2::text[])' : '';
+  if (requestedIds.length) params.push(requestedIds);
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT
+          ts.*,
+          ts.participant_dob::text,
+          ts.trial_date::text,
+          b.batch_name,
+          l.location_name
+        FROM trial_sessions ts
+        LEFT JOIN batches b ON b.batch_id = ts.batch_id
+        LEFT JOIN locations l ON l.location_id = ts.location_id
+        WHERE ts.status = 'paid'
+          AND ts.converted_to_coaching = false
+          AND ts.coach_email_sent_at IS NULL
+          AND ts.trial_date <= $1::date
+          ${idFilter}
+        ORDER BY ts.trial_date ASC, ts.trial_time ASC, ts.created_at ASC
+        LIMIT 50
+      `,
+      params
+    );
+
+    const sent = [];
+    const failed = [];
+
+    for (const trialSession of rows) {
+      try {
+        const emailResult = await sendTrialCoachAssignmentEmail(req, trialSession);
+        await pool.query(
+          `UPDATE trial_sessions SET coach_email_sent_at = NOW(), updated_at = NOW()
+           WHERE trial_session_id = $1`,
+          [trialSession.trial_session_id]
+        );
+        sent.push({
+          trial_session_id: trialSession.trial_session_id,
+          recipients: emailResult.recipients,
+          copied_recipients: emailResult.copied_recipients,
+          form_url: emailResult.form_url
+        });
+      } catch (err) {
+        console.error('Trial coach assignment email send failed:', trialSession.trial_session_id, err);
+        failed.push({
+          trial_session_id: trialSession.trial_session_id,
+          error: err.message || 'Failed to send email.'
+        });
+      }
+    }
+
+    return res.json({ success: failed.length === 0, sent, failed });
+  } catch (err) {
+    console.error('Trial send coach assignment emails error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to send coach assignment emails.' });
   }
 });
 
@@ -2353,6 +2580,510 @@ const COACHING_WAIVER_ITEMS = [
   'I further certify that I am in good health and that I have no conditions or impairments which would preclude my safe participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or service. I hereby certify that I have read the StarSportsUS / Major League Cricket Academy Philadelphia policies and procedures related to the transmission of COVID-19 / its variant and agree to follow these as written.',
   'I will produce proof of Vaccination if asked by any StarSportsUS or Major League Academy Philadelphia officials.'
 ];
+
+async function getShopifyCustomerEmailsByTag(tag) {
+  const shop = String(process.env.SHOP || '').trim();
+  const token = String(process.env.SHOPIFY_ADMIN_TOKEN || '').trim();
+  if (!shop || !token) return [];
+
+  const normalizedTag = String(tag || '').trim().toUpperCase();
+  if (!normalizedTag) return [];
+
+  const apiVersion = process.env.SHOPIFY_API_VERSION || '2024-10';
+  const url = `https://${shop}/admin/api/${apiVersion}/customers/search.json?query=${encodeURIComponent(`tag:${normalizedTag}`)}&limit=250`;
+  const response = await fetch(url, {
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Shopify ${normalizedTag} lookup failed (${response.status}): ${body.slice(0, 160)}`);
+  }
+
+  const data = await response.json();
+  const customers = Array.isArray(data.customers) ? data.customers : [];
+  return [...new Set(customers
+    .filter(customer => String(customer.tags || '')
+      .split(',')
+      .map(tag => tag.trim().toUpperCase())
+      .includes(normalizedTag))
+    .map(customer => String(customer.email || '').trim())
+    .filter(Boolean))];
+}
+
+async function getTrialCoachEmails() {
+  try {
+    return await getShopifyCustomerEmailsByTag('COACH');
+  } catch (err) {
+    console.error('Unable to load COACH emails from Shopify:', err);
+  }
+
+  return [];
+}
+
+async function getTrialCoachCopyEmails() {
+  const emails = [];
+
+  for (const tag of ['ADMIN', 'SUPERUSER']) {
+    try {
+      emails.push(...await getShopifyCustomerEmailsByTag(tag));
+    } catch (err) {
+      console.error(`Unable to load ${tag} emails from Shopify:`, err);
+    }
+  }
+
+  return [...new Set(emails)];
+}
+
+const getRequestBaseUrl = (req) => {
+  const configured = String(process.env.APP_BASE_URL || process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${protocol}://${host}`;
+};
+
+const formatBatchLabel = (batch = {}) =>
+  [
+    batch.location_name,
+    batch.batch_name,
+    [batch.day, [batch.time, batch.end_time].filter(Boolean).join('-')].filter(Boolean).join(' ')
+  ].filter(Boolean).join(' | ');
+
+const coachingFeeOptionsByProgramLevel = {
+  Beginner: [
+    { label: 'Quarterly', amount: 450 },
+    { label: 'Semi-Annual', amount: 900 },
+    { label: 'Annual', amount: 1700 }
+  ],
+  Intermediate: [
+    { label: 'Quarterly', amount: 575 },
+    { label: 'Semi-Annual', amount: 1150 },
+    { label: 'Annual', amount: 2200 }
+  ]
+};
+
+const formatCurrency = (amount) =>
+  `$${Number(amount || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+const formatBatchScheduleLine = (batch = {}) => {
+  const time = [batch.time, batch.end_time].filter(Boolean).join(' - ');
+  const name = batch.batch_name ? `${batch.batch_name}: ` : '';
+  return `${name}${[batch.day, time].filter(Boolean).join(': ')}`;
+};
+
+async function getTrialSessionWithRecommendedBatches(trialSessionId) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+        ts.*,
+        ts.participant_dob::text,
+        ts.trial_date::text,
+        b.batch_name AS trial_batch_name,
+        l.location_name AS trial_location_name
+      FROM trial_sessions ts
+      LEFT JOIN batches b ON b.batch_id = ts.batch_id
+      LEFT JOIN locations l ON l.location_id = ts.location_id
+      WHERE ts.trial_session_id = $1
+      LIMIT 1
+    `,
+    [trialSessionId]
+  );
+
+  const trialSession = rows[0] || null;
+  if (!trialSession) return null;
+
+  const recommendedIds = trialSession.recommended_batch_ids || [];
+  if (!recommendedIds.length) {
+    trialSession.recommended_batches = [];
+    return trialSession;
+  }
+
+  const batchResult = await pool.query(
+    `
+      SELECT
+        b.batch_id,
+        b.batch_name,
+        b.day,
+        b.time,
+        b.end_time,
+        b.location_id,
+        l.location_name
+      FROM batches b
+      LEFT JOIN locations l ON l.location_id = b.location_id
+      WHERE b.batch_id = ANY($1::int[])
+    `,
+    [recommendedIds]
+  );
+  const batchMap = new Map(batchResult.rows.map(batch => [Number(batch.batch_id), batch]));
+  trialSession.recommended_batches = recommendedIds
+    .map(id => batchMap.get(Number(id)))
+    .filter(Boolean);
+
+  return trialSession;
+}
+
+function buildParentBatchOfferEmail(req, trialSession) {
+  const participantName = `${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim() || 'your child';
+  const programLevel = normalizeRecommendedProgramLevel(trialSession.recommended_program_level || '') || 'Beginner';
+  const fees = coachingFeeOptionsByProgramLevel[programLevel] || coachingFeeOptionsByProgramLevel.Beginner;
+  const batches = trialSession.recommended_batches || [];
+  const primaryLocation = batches[0]?.location_name || trialSession.trial_location_name || '';
+  const guideUrl = `${getRequestBaseUrl(req)}/coaching-enrollment-user-guide/download`;
+  const feeRows = fees.map(fee => `<li>${escapeHtml(formatCurrency(fee.amount))} - ${escapeHtml(fee.label)}</li>`).join('');
+  const batchRows = batches.length
+    ? batches.map(batch => `<li>${escapeHtml(formatBatchScheduleLine(batch))}</li>`).join('')
+    : '<li>Batch details will be confirmed by the coaching team.</li>';
+
+  const html = `
+    <p>Hi,</p>
+    <p>We received feedback from our coaches regarding ${escapeHtml(participantName)}'s trial session.</p>
+    <p>Based on the coach recommendation, we are offering enrollment in the <strong>${escapeHtml(programLevel)}</strong> program.</p>
+    <h3>Batch Offer${primaryLocation ? ` - ${escapeHtml(primaryLocation)}` : ''} (${escapeHtml(programLevel)})</h3>
+    <ul>${batchRows}</ul>
+    <h3>Fee Options (Auto Pay Available)</h3>
+    <ul>${feeRows}</ul>
+    <h3>Enrollment Process</h3>
+    <p><strong>Step 1: Create CricClubs ID</strong><br>
+    Please register using this link:<br>
+    <a href="https://cricclubs.com/StarSportsUSYouthCricketLeague">https://cricclubs.com/StarSportsUSYouthCricketLeague</a></p>
+    <p><strong>Step 2: Coaching Enrollment &amp; Payment</strong><br>
+    After obtaining the CricClubs ID, follow the enrollment guide:<br>
+    <a href="${escapeHtml(guideUrl)}">Open Coaching Enrollment User Guide</a></p>
+    <ul>
+      <li>Login using your email and verification code.</li>
+      <li>Fill in parent and child details, including CricClubs ID.</li>
+      <li>Complete checkout to set up auto pay.</li>
+    </ul>
+    <p>Once completed, your child will be officially enrolled in the coaching program, and we will add you to the WhatsApp group for all coaching-related communication.</p>
+    <p>Please let me know if you need any help with the process.</p>
+    <p>Thank you,<br>MLCA Coaching</p>
+  `;
+
+  const text = [
+    'Hi,',
+    '',
+    `We received feedback from our coaches regarding ${participantName}'s trial session.`,
+    `Based on the coach recommendation, we are offering enrollment in the ${programLevel} program.`,
+    '',
+    `Batch Offer${primaryLocation ? ` - ${primaryLocation}` : ''} (${programLevel})`,
+    ...(batches.length ? batches.map(formatBatchScheduleLine) : ['Batch details will be confirmed by the coaching team.']),
+    '',
+    'Fee Options (Auto Pay Available)',
+    ...fees.map(fee => `${formatCurrency(fee.amount)} - ${fee.label}`),
+    '',
+    'Enrollment Process',
+    'Step 1: Create CricClubs ID',
+    'https://cricclubs.com/StarSportsUSYouthCricketLeague',
+    '',
+    'Step 2: Coaching Enrollment & Payment',
+    `Follow the enrollment guide: ${guideUrl}`,
+    '',
+    'Login using your email and verification code.',
+    'Fill in parent and child details, including CricClubs ID.',
+    'Complete checkout to set up auto pay.',
+    '',
+    'Once completed, your child will be officially enrolled in the coaching program, and we will add you to the WhatsApp group for all coaching-related communication.',
+    '',
+    'Please let me know if you need any help with the process.',
+    '',
+    'Thank you,',
+    'MLCA Coaching'
+  ].join('\n');
+
+  return { html, text, guideUrl, programLevel };
+}
+
+async function sendParentBatchOfferEmail(req, trialSessionId) {
+  const trialSession = await getTrialSessionWithRecommendedBatches(trialSessionId);
+  if (!trialSession) throw new Error('Trial session not found.');
+  if (trialSession.parent_batch_offer_email_sent_at) {
+    return { skipped: true, reason: 'Parent batch offer email already sent.' };
+  }
+  if (!trialSession.customer_email) throw new Error('Parent email is missing.');
+
+  const email = buildParentBatchOfferEmail(req, trialSession);
+  const participantName = `${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim() || 'your child';
+  const msg = {
+    to: trialSession.customer_email,
+    from: process.env.EMAIL_FROM,
+    subject: `Coaching enrollment offer for ${participantName}`,
+    html: email.html,
+    text: email.text
+  };
+
+  if (fs.existsSync(COACHING_ENROLLMENT_GUIDE_PATH)) {
+    msg.attachments = [{
+      content: fs.readFileSync(COACHING_ENROLLMENT_GUIDE_PATH).toString('base64'),
+      filename: 'coaching-enrollment-user-guide.pdf',
+      type: 'application/pdf',
+      disposition: 'attachment'
+    }];
+  }
+
+  await sgMail.send(msg);
+  await pool.query(
+    `UPDATE trial_sessions
+     SET parent_batch_offer_email_sent_at = NOW(), updated_at = NOW()
+     WHERE trial_session_id = $1`,
+    [trialSessionId]
+  );
+
+  return {
+    skipped: false,
+    recipient: trialSession.customer_email,
+    guide_url: email.guideUrl,
+    program_level: email.programLevel
+  };
+}
+
+async function ensureCoachFormToken(trialSessionId) {
+  const token = crypto.randomBytes(24).toString('hex');
+  const { rows } = await pool.query(
+    `
+      UPDATE trial_sessions
+      SET coach_form_token = COALESCE(coach_form_token, $2),
+          updated_at = NOW()
+      WHERE trial_session_id = $1
+      RETURNING coach_form_token
+    `,
+    [trialSessionId, token]
+  );
+
+  return rows[0]?.coach_form_token || token;
+}
+
+async function getTrialSessionForCoachForm(trialSessionId, token) {
+  const { rows } = await pool.query(
+    `
+      SELECT
+        ts.*,
+        ts.participant_dob::text,
+        ts.trial_date::text,
+        b.batch_name,
+        l.location_name,
+        l.address_1 AS location_address_1,
+        l.address_2 AS location_address_2,
+        l.city AS location_city,
+        l.state AS location_state,
+        l.zip AS location_zip,
+        l.country AS location_country
+      FROM trial_sessions ts
+      LEFT JOIN batches b ON b.batch_id = ts.batch_id
+      LEFT JOIN locations l ON l.location_id = ts.location_id
+      WHERE ts.trial_session_id = $1
+        AND ts.coach_form_token = $2
+      LIMIT 1
+    `,
+    [trialSessionId, token]
+  );
+
+  return rows[0] || null;
+}
+
+async function getExistingBatchOptions() {
+  const { rows } = await pool.query(
+    `
+      SELECT
+        b.batch_id,
+        b.batch_name,
+        b.day,
+        b.time,
+        b.end_time,
+        b.comments,
+        l.location_name
+      FROM batches b
+      LEFT JOIN locations l ON l.location_id = b.location_id
+      WHERE b.is_trial_batch = false
+      ORDER BY
+        l.location_name ASC NULLS LAST,
+        CASE b.day
+          WHEN 'Monday' THEN 1
+          WHEN 'Tuesday' THEN 2
+          WHEN 'Wednesday' THEN 3
+          WHEN 'Thursday' THEN 4
+          WHEN 'Friday' THEN 5
+          WHEN 'Saturday' THEN 6
+          WHEN 'Sunday' THEN 7
+          ELSE 8
+        END,
+        b.time ASC,
+        b.batch_name ASC
+    `
+  );
+
+  return rows;
+}
+
+const normalizeRecommendedProgramLevel = (value = '') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['beginner', 'coach-beginner'].includes(normalized)) return 'Beginner';
+  if (['intermediate', 'coach-intermediate'].includes(normalized)) return 'Intermediate';
+  return '';
+};
+
+async function saveTrialCoachRecommendations(trialSessionId, recommendedBatchIds, recommendedProgramLevel, coachNotes) {
+  const ids = [...new Set((recommendedBatchIds || [])
+    .map(id => Number(id))
+    .filter(id => Number.isInteger(id) && id > 0))]
+    .slice(0, 4);
+  const programLevel = normalizeRecommendedProgramLevel(recommendedProgramLevel);
+
+  if (!programLevel) {
+    throw new Error('Program level must be Beginner or Intermediate.');
+  }
+
+  if (!ids.length) {
+    throw new Error('At least one batch recommendation is required.');
+  }
+
+  if (ids.length) {
+    const { rows } = await pool.query(
+      'SELECT batch_id FROM batches WHERE batch_id = ANY($1::int[]) AND is_trial_batch = false',
+      [ids]
+    );
+    if (rows.length !== ids.length) {
+      throw new Error('One or more selected batches are not valid existing batches.');
+    }
+  }
+
+  const { rows } = await pool.query(
+    `
+      UPDATE trial_sessions
+      SET recommended_batch_ids = $2::int[],
+          recommended_program_level = $3,
+          coach_notes = $4,
+          coach_recommendations_submitted_at = NOW(),
+          updated_at = NOW()
+      WHERE trial_session_id = $1
+      RETURNING trial_session_id, recommended_batch_ids, recommended_program_level, coach_notes, coach_recommendations_submitted_at
+    `,
+    [trialSessionId, ids, programLevel, coachNotes || null]
+  );
+
+  return rows[0] || null;
+}
+
+function renderTrialCoachRecommendationForm({ trialSession, batches, token, successMessage = '', errorMessage = '' }) {
+  const currentProgramLevel = normalizeRecommendedProgramLevel(trialSession.recommended_program_level || '');
+  const optionsHtml = ['<option value="">Select batch</option>']
+    .concat(batches.map(batch => {
+      const id = String(batch.batch_id);
+      return `<option value="${escapeHtml(id)}">${escapeHtml(formatBatchLabel(batch))}</option>`;
+    }))
+    .join('');
+  const selectHtml = Array.from({ length: 4 }, (_, index) => {
+    const currentId = String((trialSession.recommended_batch_ids || [])[index] || '');
+    return `
+      <label>
+        Option ${index + 1}
+        <select name="recommended_batch_ids"${index === 0 ? ' required' : ''}>
+          ${optionsHtml.replace(`value="${escapeHtml(currentId)}"`, `value="${escapeHtml(currentId)}" selected`)}
+        </select>
+      </label>
+    `;
+  }).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trial Batch Recommendations</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f6f7f9; color: #17202a; }
+    main { max-width: 760px; margin: 0 auto; padding: 28px 16px 40px; }
+    section, form { background: #fff; border: 1px solid #d9dee5; border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+    h1 { font-size: 24px; margin: 0 0 16px; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    dl { display: grid; grid-template-columns: 150px 1fr; gap: 8px 14px; margin: 0; }
+    dt { font-weight: 700; color: #44515f; }
+    dd { margin: 0; }
+    label { display: block; font-weight: 700; margin: 14px 0; }
+    select, textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; border: 1px solid #b8c0cc; border-radius: 6px; font: inherit; background: #fff; }
+    textarea { min-height: 120px; resize: vertical; }
+    button { background: #114f8a; color: #fff; border: 0; border-radius: 6px; padding: 11px 16px; font-weight: 700; cursor: pointer; }
+    .notice { border-radius: 6px; padding: 12px; margin-bottom: 16px; }
+    .success { background: #e7f6ed; border: 1px solid #9fd7b5; }
+    .error { background: #fdeceb; border: 1px solid #e3aaa5; }
+    @media (max-width: 560px) { dl { grid-template-columns: 1fr; } dt { margin-top: 8px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Trial Batch Recommendations</h1>
+    ${successMessage ? `<div class="notice success">${escapeHtml(successMessage)}</div>` : ''}
+    ${errorMessage ? `<div class="notice error">${escapeHtml(errorMessage)}</div>` : ''}
+    <section>
+      <h2>Participant</h2>
+      <dl>
+        <dt>Name</dt><dd>${escapeHtml(`${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim())}</dd>
+        <dt>DOB</dt><dd>${escapeHtml(trialSession.participant_dob || '')}</dd>
+        <dt>Parent</dt><dd>${escapeHtml(`${trialSession.parent_first_name || ''} ${trialSession.parent_last_name || ''}`.trim())}</dd>
+        <dt>Email</dt><dd>${escapeHtml(trialSession.customer_email || '')}</dd>
+        <dt>Trial</dt><dd>${escapeHtml([trialSession.trial_date, trialSession.trial_time].filter(Boolean).join(' '))}</dd>
+        <dt>Trial batch</dt><dd>${escapeHtml([trialSession.location_name, trialSession.batch_name].filter(Boolean).join(' | '))}</dd>
+      </dl>
+    </section>
+    <form method="post" action="/coach/trial-sessions/${encodeURIComponent(trialSession.trial_session_id)}/recommendations-form?token=${encodeURIComponent(token)}">
+      <h2>Recommended Program and Existing Batches</h2>
+      <label>
+        Program level
+        <select name="recommended_program_level" required>
+          <option value="">Select program level</option>
+          <option value="Beginner"${currentProgramLevel === 'Beginner' ? ' selected' : ''}>Beginner</option>
+          <option value="Intermediate"${currentProgramLevel === 'Intermediate' ? ' selected' : ''}>Intermediate</option>
+        </select>
+      </label>
+      ${selectHtml}
+      <label>
+        Notes
+        <textarea name="coach_notes">${escapeHtml(trialSession.coach_notes || '')}</textarea>
+      </label>
+      <button type="submit">Submit Recommendations</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+async function sendTrialCoachAssignmentEmail(req, trialSession) {
+  const coachEmails = await getTrialCoachEmails();
+  if (!coachEmails.length) {
+    throw new Error('No Shopify customers tagged COACH have email addresses.');
+  }
+  const copyEmails = (await getTrialCoachCopyEmails())
+    .filter(email => !coachEmails.some(coachEmail => coachEmail.toLowerCase() === email.toLowerCase()));
+
+  const token = await ensureCoachFormToken(trialSession.trial_session_id);
+  const formUrl = `${getRequestBaseUrl(req)}/coach/trial-sessions/${encodeURIComponent(trialSession.trial_session_id)}/recommendations-form?token=${encodeURIComponent(token)}`;
+  const participantName = `${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim();
+
+  const html = `
+    <p>Hi coaches,</p>
+    <p>The trial session is complete for <strong>${escapeHtml(participantName)}</strong>.</p>
+    <p>Please choose the program level and propose up to 4 existing batch options for this participant.</p>
+    <p><a href="${escapeHtml(formUrl)}">Open batch recommendation form</a></p>
+    <p>Trial: ${escapeHtml([trialSession.trial_date, trialSession.trial_time].filter(Boolean).join(' '))}<br>
+    Location: ${escapeHtml(trialSession.location_name || '')}<br>
+    Trial batch: ${escapeHtml(trialSession.batch_name || '')}</p>
+    <p>Thank you,<br>MLCA Coaching</p>
+  `;
+
+  await sgMail.send({
+    to: coachEmails,
+    ...(copyEmails.length ? { cc: copyEmails } : {}),
+    from: process.env.EMAIL_FROM,
+    subject: `Trial complete: recommend batches for ${participantName || 'participant'}`,
+    html
+  });
+
+  return { recipients: coachEmails, copied_recipients: copyEmails, form_url: formUrl };
+}
 
 function isValidShopifyWebhook(req) {
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
