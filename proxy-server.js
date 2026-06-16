@@ -2675,6 +2675,104 @@ const getWaiverAgreementItems = (waiver = {}) => {
   return items.length ? items : COACHING_WAIVER_ITEMS;
 };
 
+const isHtmlContent = (value = '') => /<\s*[a-z][\s\S]*>/i.test(String(value || ''));
+
+const parseStyleAttribute = (attrs = '') => {
+  const styleMatch = String(attrs || '').match(/\sstyle=(["'])(.*?)\1/i);
+  const style = styleMatch ? styleMatch[2].toLowerCase() : '';
+  return {
+    align: style.includes('text-align:center') ? 'center' : style.includes('text-align:right') ? 'right' : 'left',
+    bold: /font-weight\s*:\s*(bold|[6-9]00)/i.test(style),
+    italic: /font-style\s*:\s*italic/i.test(style),
+    underline: /text-decoration[^;]*underline/i.test(style)
+  };
+};
+
+const stripHtmlForPdf = (value = '') =>
+  htmlToPlainWaiverText(value).replace(/\n{3,}/g, '\n\n');
+
+const buildWaiverTextBlocks = (value = '') => {
+  const content = String(value || DEFAULT_WAIVER_TEXT);
+  if (!isHtmlContent(content)) {
+    return stripHtmlForPdf(content)
+      .split(/\n{2,}/)
+      .map(text => ({ type: 'paragraph', text: text.trim(), align: 'left' }))
+      .filter(block => block.text);
+  }
+
+  const blocks = [];
+  const blockRegex = /<(h[1-6]|p|div|li)([^>]*)>([\s\S]*?)<\/\1>/gi;
+  let match;
+  while ((match = blockRegex.exec(content))) {
+    const tag = match[1].toLowerCase();
+    const attrs = match[2] || '';
+    const inner = match[3] || '';
+    const text = stripHtmlForPdf(inner).trim();
+    if (!text) continue;
+
+    const inline = {
+      bold: /<(strong|b)\b/i.test(inner),
+      italic: /<(em|i)\b/i.test(inner),
+      underline: /<u\b/i.test(inner)
+    };
+    const style = parseStyleAttribute(attrs);
+    blocks.push({
+      type: tag.startsWith('h') ? 'heading' : tag === 'li' ? 'listItem' : 'paragraph',
+      text,
+      align: style.align,
+      bold: style.bold || inline.bold || tag.startsWith('h'),
+      italic: style.italic || inline.italic,
+      underline: style.underline || inline.underline
+    });
+  }
+
+  if (!blocks.length) {
+    return stripHtmlForPdf(content)
+      .split(/\n{2,}/)
+      .map(text => ({ type: 'paragraph', text: text.trim(), align: 'left' }))
+      .filter(block => block.text);
+  }
+
+  return blocks;
+};
+
+const ensurePdfSpace = (doc, needed = 70) => {
+  if (doc.y > doc.page.height - doc.page.margins.bottom - needed) {
+    doc.addPage();
+  }
+};
+
+const getPdfFontName = ({ bold, italic } = {}) => {
+  if (bold && italic) return 'Helvetica-BoldOblique';
+  if (bold) return 'Helvetica-Bold';
+  if (italic) return 'Helvetica-Oblique';
+  return 'Helvetica';
+};
+
+const renderWaiverTextInPdf = (doc, waiver) => {
+  const sourceText = waiver.waiver_text || (Array.isArray(waiver.waiver_items) ? waiver.waiver_items.join('\n\n') : DEFAULT_WAIVER_TEXT);
+  const blocks = buildWaiverTextBlocks(sourceText);
+
+  blocks.forEach(block => {
+    ensurePdfSpace(doc, block.type === 'heading' ? 60 : 45);
+    const fontSize = block.type === 'heading' ? 12 : 10;
+    doc.font(getPdfFontName(block)).fontSize(fontSize);
+
+    if (block.type === 'listItem') {
+      doc.text(`• ${block.text}`, { align: block.align || 'left', indent: 12 });
+    } else {
+      doc.text(block.text, {
+        align: block.align || 'left',
+        underline: Boolean(block.underline)
+      });
+    }
+
+    doc.moveDown(block.type === 'heading' ? 0.35 : 0.45);
+  });
+
+  doc.font('Helvetica').fontSize(10);
+};
+
 const serializeWaiverForm = (row = {}) => ({
   form_id: row.form_id,
   title: row.title,
@@ -3517,7 +3615,6 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
   const submittedAt = waiver.submitted_at || new Date().toISOString();
   const adultName = [waiver.adult_first_name, waiver.adult_last_name].filter(Boolean).join(' ').trim();
   const waiverTitle = getWaiverAgreementTitle(waiver);
-  const waiverItems = getWaiverAgreementItems(waiver);
 
   doc.fontSize(18).text('Liability Waiver', { align: 'center' });
   doc.moveDown();
@@ -3549,12 +3646,9 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
   doc.moveDown();
 
   doc.fontSize(13).text('Waiver Agreement', { underline: true });
-  doc.fontSize(10).text(waiverTitle, { align: 'left' });
-  doc.moveDown(0.5);
-  waiverItems.forEach((item, index) => {
-    doc.text(`${index + 1}. ${item}`, { align: 'left' });
-    doc.moveDown(0.35);
-  });
+  doc.font('Helvetica-Bold').fontSize(10).text(waiverTitle, { align: 'left' });
+  doc.font('Helvetica').moveDown(0.5);
+  renderWaiverTextInPdf(doc, waiver);
   doc.moveDown();
 
   doc.fontSize(13).text('Signature', { underline: true });
