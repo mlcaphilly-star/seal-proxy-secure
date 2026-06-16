@@ -2614,6 +2614,80 @@ const getSendgridErrorDetails = (err) => {
   return err?.message || 'Unknown email error';
 };
 
+const getMailchimpServerPrefix = () => {
+  const configured = String(process.env.MAILCHIMP_SERVER_PREFIX || '').trim();
+  if (configured) return configured;
+
+  const apiKey = String(process.env.MAILCHIMP_API_KEY || '').trim();
+  const suffix = apiKey.split('-').pop();
+  return suffix && suffix !== apiKey ? suffix : '';
+};
+
+const getMailchimpErrorDetails = async (response) => {
+  const text = await response.text().catch(() => '');
+  if (!text) return `${response.status} ${response.statusText}`;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.detail || parsed.title || text;
+  } catch (_) {
+    return text;
+  }
+};
+
+async function subscribeWaiverContactToMailchimp(waiver = {}) {
+  if (!parseBoolean(waiver.mailing_list)) {
+    return { skipped: true, reason: 'mailing_list_not_checked' };
+  }
+
+  const apiKey = String(process.env.MAILCHIMP_API_KEY || '').trim();
+  const audienceId = String(process.env.MAILCHIMP_AUDIENCE_ID || process.env.MAILCHIMP_LIST_ID || '').trim();
+  const serverPrefix = getMailchimpServerPrefix();
+  const email = String(waiver.parent_email || '').trim().toLowerCase();
+
+  if (!apiKey || !audienceId || !serverPrefix) {
+    return { skipped: true, reason: 'mailchimp_not_configured' };
+  }
+
+  if (!email) {
+    return { skipped: true, reason: 'missing_email' };
+  }
+
+  const subscriberHash = crypto.createHash('md5').update(email).digest('hex');
+  const url = `https://${serverPrefix}.api.mailchimp.com/3.0/lists/${encodeURIComponent(audienceId)}/members/${subscriberHash}`;
+  const auth = Buffer.from(`anystring:${apiKey}`).toString('base64');
+  const payload = {
+    email_address: email,
+    status_if_new: 'subscribed',
+    status: 'subscribed',
+    merge_fields: {
+      FNAME: String(waiver.parent_first_name || '').trim(),
+      LNAME: String(waiver.parent_last_name || '').trim(),
+      PHONE: String(waiver.parent_mobile || '').trim()
+    },
+    tags: ['Waiver Mailing List']
+  };
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await getMailchimpErrorDetails(response));
+  }
+
+  const result = await response.json();
+  return {
+    success: true,
+    email_address: result.email_address || email,
+    status: result.status || 'subscribed'
+  };
+}
+
 const getClientIpAddress = (req) => {
   const forwardedFor = req.headers['x-forwarded-for'];
   if (forwardedFor) return String(forwardedFor).split(',')[0].trim();
@@ -3984,10 +4058,23 @@ app.post('/standalone-waiver', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Unable to save waiver. Please try again.' });
   }
 
+  let mailingListResult = { skipped: true, reason: 'mailing_list_not_checked' };
+  try {
+    mailingListResult = await subscribeWaiverContactToMailchimp(waiver);
+  } catch (err) {
+    mailingListResult = { success: false, error: err.message || 'Mailchimp subscription failed.' };
+    console.error('Standalone waiver Mailchimp subscription failed:', {
+      waiver_id: waiverId,
+      email: waiver.parent_email,
+      error: mailingListResult.error
+    });
+  }
+
   return res.json({
     success: true,
     waiver_id: waiverId,
-    email_status: 'pending_make_email'
+    email_status: 'pending_make_email',
+    mailing_list: mailingListResult
   });
 });
 
