@@ -309,6 +309,33 @@ pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_waivers_email_status ON coac
   .then(() => console.log('coaching_waivers email/status index ready'))
   .catch(err => console.error('Error creating coaching_waivers email/status index:', err));
 
+const createWaiverFormsTableSQL = `
+CREATE TABLE IF NOT EXISTS waiver_forms (
+  form_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  waiver_text TEXT NOT NULL,
+  is_active_standalone BOOLEAN NOT NULL DEFAULT false,
+  is_active_registration BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createWaiverFormsTableSQL)
+  .then(() => console.log('waiver_forms table ready'))
+  .catch(err => console.error('Error creating waiver_forms table:', err));
+
+pool.query('ALTER TABLE waiver_forms ADD COLUMN IF NOT EXISTS is_active_registration BOOLEAN NOT NULL DEFAULT false')
+  .then(() => console.log('waiver_forms active registration column ready'))
+  .catch(err => console.error('Error creating waiver_forms active registration column:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_waiver_forms_active_standalone ON waiver_forms(is_active_standalone, updated_at)')
+  .then(() => console.log('waiver_forms active standalone index ready'))
+  .catch(err => console.error('Error creating waiver_forms active standalone index:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_waiver_forms_active_registration ON waiver_forms(is_active_registration, updated_at)')
+  .then(() => console.log('waiver_forms active registration index ready'))
+  .catch(err => console.error('Error creating waiver_forms active registration index:', err));
+
 const createTrialSessionsTableSQL = `
 CREATE TABLE IF NOT EXISTS trial_sessions (
   trial_session_id TEXT PRIMARY KEY,
@@ -2580,6 +2607,61 @@ const COACHING_WAIVER_ITEMS = [
   'I further certify that I am in good health and that I have no conditions or impairments which would preclude my safe participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or service. I hereby certify that I have read the StarSportsUS / Major League Cricket Academy Philadelphia policies and procedures related to the transmission of COVID-19 / its variant and agree to follow these as written.',
   'I will produce proof of Vaccination if asked by any StarSportsUS or Major League Academy Philadelphia officials.'
 ];
+const DEFAULT_WAIVER_TEXT = COACHING_WAIVER_ITEMS.join('\n\n');
+
+const normalizeWaiverTextItems = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item || '').trim()).filter(Boolean);
+  }
+
+  return String(value || '')
+    .split(/\n\s*\n|\r?\n/)
+    .map(item => item.replace(/^\s*\d+[\).]\s*/, '').trim())
+    .filter(Boolean);
+};
+
+const getWaiverAgreementTitle = (waiver = {}) =>
+  String(waiver.waiver_title || COACHING_WAIVER_TITLE).trim() || COACHING_WAIVER_TITLE;
+
+const getWaiverAgreementItems = (waiver = {}) => {
+  const items = normalizeWaiverTextItems(waiver.waiver_items || waiver.waiver_text);
+  return items.length ? items : COACHING_WAIVER_ITEMS;
+};
+
+const serializeWaiverForm = (row = {}) => ({
+  form_id: row.form_id,
+  title: row.title,
+  waiver_text: row.waiver_text,
+  waiver_items: normalizeWaiverTextItems(row.waiver_text),
+  is_active_standalone: Boolean(row.is_active_standalone),
+  is_active_registration: Boolean(row.is_active_registration),
+  created_at: row.created_at,
+  updated_at: row.updated_at
+});
+
+async function getActiveWaiverFormByPlacement(placement) {
+  const column = placement === 'registration' ? 'is_active_registration' : 'is_active_standalone';
+  const { rows } = await pool.query(
+    `
+      SELECT form_id, title, waiver_text, is_active_standalone, is_active_registration, created_at, updated_at
+      FROM waiver_forms
+      WHERE ${column} = true
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `
+  );
+
+  return rows[0] ? serializeWaiverForm(rows[0]) : null;
+}
+
+const getDefaultWaiverForm = (placement) => ({
+  form_id: '',
+  title: COACHING_WAIVER_TITLE,
+  waiver_text: DEFAULT_WAIVER_TEXT,
+  waiver_items: COACHING_WAIVER_ITEMS,
+  is_active_standalone: placement === 'standalone',
+  is_active_registration: placement === 'registration'
+});
 
 async function getShopifyCustomerEmailsByTag(tag) {
   const shop = String(process.env.SHOP || '').trim();
@@ -3125,15 +3207,18 @@ const getOrderLineProperty = (lineItem = {}, key) => {
 const getPaidOrderCustomerEmail = (order = {}) =>
   order.email || order.customer?.email || order.contact_email || '';
 
-async function savePendingCoachingWaiver(waiver, pdfBuffer) {
+async function savePendingCoachingWaiver(waiver, pdfBuffer, options = {}) {
   await pool.query(createCoachingWaiversTableSQL);
 
   const waiverId = crypto.randomUUID();
   const childNames = (waiver.children || [])
     .map(child => `${child.first_name || ''} ${child.last_name || ''}`.trim())
     .filter(Boolean);
+  const adultName = [waiver.adult_first_name, waiver.adult_last_name].filter(Boolean).join(' ').trim();
+  const participantNames = [adultName, ...childNames].filter(Boolean);
   const payloadForStorage = { ...waiver };
   delete payloadForStorage.signature_data_url;
+  const status = options.status || 'pending_checkout';
 
   await pool.query(
     `
@@ -3151,20 +3236,21 @@ async function savePendingCoachingWaiver(waiver, pdfBuffer) {
         pdf,
         submitted_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_checkout', $9::jsonb, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $12, $9::jsonb, $10, $11)
     `,
     [
       waiverId,
       waiver.parent_email,
       waiver.parent_first_name,
       waiver.parent_last_name,
-      childNames.join(', '),
+      participantNames.join(', '),
       waiver.emergency_contact_name,
       waiver.emergency_contact_phone,
       waiver.client_ip,
       JSON.stringify(payloadForStorage),
       pdfBuffer,
-      waiver.submitted_at
+      waiver.submitted_at,
+      status
     ]
   );
 
@@ -3382,6 +3468,9 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
 
   const children = Array.isArray(waiver.children) ? waiver.children : [];
   const submittedAt = waiver.submitted_at || new Date().toISOString();
+  const adultName = [waiver.adult_first_name, waiver.adult_last_name].filter(Boolean).join(' ').trim();
+  const waiverTitle = getWaiverAgreementTitle(waiver);
+  const waiverItems = getWaiverAgreementItems(waiver);
 
   doc.fontSize(18).text('Liability Waiver', { align: 'center' });
   doc.moveDown();
@@ -3389,9 +3478,10 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
   doc.text(`Client IP Address: ${waiver.client_ip || ''}`);
   doc.moveDown();
 
-  doc.fontSize(13).text('Guardian Information', { underline: true });
+  doc.fontSize(13).text('Signee Information', { underline: true });
   doc.fontSize(10)
     .text(`Name: ${waiver.parent_first_name || ''} ${waiver.parent_last_name || ''}`)
+    .text(`Date of Birth: ${waiver.parent_dob || ''}`)
     .text(`Email: ${waiver.parent_email || ''}`)
     .text(`Mobile: ${waiver.parent_mobile || ''}`)
     .text(`Address: ${[waiver.parent_address1, waiver.parent_address2, waiver.parent_city, waiver.parent_state, waiver.parent_zip].filter(Boolean).join(', ')}`)
@@ -3399,15 +3489,22 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
   doc.moveDown();
 
   doc.fontSize(13).text('Participant Information', { underline: true });
+  doc.fontSize(10).text(`Participation Type: ${waiver.participant_type || ''}`);
+  if (adultName) {
+    doc.text(`Adult: ${adultName} | DOB: ${waiver.adult_dob || waiver.parent_dob || ''}`);
+  }
   children.forEach((child, index) => {
     doc.fontSize(10).text(`${index + 1}. ${child.first_name || ''} ${child.last_name || ''} | DOB: ${child.dob || ''} | Program: ${child.program || ''} | Billing: ${child.billing_interval || ''}`);
   });
+  if (!adultName && children.length === 0) {
+    doc.fontSize(10).text('No participants provided.');
+  }
   doc.moveDown();
 
   doc.fontSize(13).text('Waiver Agreement', { underline: true });
-  doc.fontSize(10).text(COACHING_WAIVER_TITLE, { align: 'left' });
+  doc.fontSize(10).text(waiverTitle, { align: 'left' });
   doc.moveDown(0.5);
-  COACHING_WAIVER_ITEMS.forEach((item, index) => {
+  waiverItems.forEach((item, index) => {
     doc.text(`${index + 1}. ${item}`, { align: 'left' });
     doc.moveDown(0.35);
   });
@@ -3431,10 +3528,12 @@ async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
     .map(child => `${child.first_name || ''} ${child.last_name || ''}`.trim())
     .filter(Boolean)
     .join(', ');
+  const adultName = [waiver.adult_first_name, waiver.adult_last_name].filter(Boolean).join(' ').trim();
+  const participantNames = [adultName, childNames].filter(Boolean).join(', ');
 
   const html = `
     <p>Hi ${escapeHtml(waiver.parent_first_name || '')},</p>
-    <p>Attached is a copy of your signed coaching waiver${childNames ? ` for ${escapeHtml(childNames)}` : ''}.</p>
+    <p>Attached is a copy of your signed coaching waiver${participantNames ? ` for ${escapeHtml(participantNames)}` : ''}.</p>
     <p>Client IP Address captured at signing: ${escapeHtml(waiver.client_ip || '')}</p>
     <p>Thank you,<br>MLCA Coaching</p>
   `;
@@ -3453,6 +3552,38 @@ async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
   });
 }
 
+const hasValidWaiverParticipants = (waiver) => {
+  const participantType = String(waiver.participant_type || '').trim();
+  const children = Array.isArray(waiver.children) ? waiver.children : [];
+  const hasAdult = Boolean((waiver.adult_first_name || waiver.parent_first_name) && (waiver.adult_last_name || waiver.parent_last_name));
+  const hasChild = children.some(child => child.first_name && child.last_name);
+
+  if (participantType === 'adult') return hasAdult;
+  if (participantType === 'adult_children') return hasAdult && hasChild;
+  if (participantType === 'children') return hasChild;
+  return hasAdult || hasChild;
+};
+
+const validateCoachingWaiver = (waiver, options = {}) => {
+  if (!waiver.parent_first_name || !waiver.parent_last_name || !waiver.parent_email || !waiver.parent_mobile) {
+    return 'Missing required signee information.';
+  }
+
+  if (!waiver.emergency_contact_name || !waiver.emergency_contact_phone) {
+    return 'Missing emergency contact information.';
+  }
+
+  if (options.requireParticipants !== false && !hasValidWaiverParticipants(waiver)) {
+    return 'Missing participant information.';
+  }
+
+  if (!waiver.signature_name || !/^data:image\/png;base64,/.test(String(waiver.signature_data_url || ''))) {
+    return 'Missing signature.';
+  }
+
+  return '';
+};
+
 app.post('/coaching-waiver', async (req, res) => {
   const waiver = {
     ...req.body,
@@ -3460,21 +3591,23 @@ app.post('/coaching-waiver', async (req, res) => {
     submitted_at: new Date().toISOString()
   };
 
-  if (!waiver.parent_first_name || !waiver.parent_last_name || !waiver.parent_email || !waiver.parent_mobile) {
-    return res.status(400).json({ success: false, error: 'Missing required parent information.' });
+  if (!waiver.waiver_text && !waiver.waiver_items) {
+    try {
+      const activeForm = await getActiveWaiverFormByPlacement('registration');
+      if (activeForm) {
+        waiver.waiver_form_id = activeForm.form_id;
+        waiver.waiver_title = activeForm.title;
+        waiver.waiver_text = activeForm.waiver_text;
+      }
+    } catch (err) {
+      console.error('Unable to attach active registration waiver form text:', err);
+    }
   }
+  waiver.waiver_title = waiver.waiver_title || COACHING_WAIVER_TITLE;
+  waiver.waiver_items = getWaiverAgreementItems(waiver);
 
-  if (!waiver.emergency_contact_name || !waiver.emergency_contact_phone) {
-    return res.status(400).json({ success: false, error: 'Missing emergency contact information.' });
-  }
-
-  if (!Array.isArray(waiver.children) || waiver.children.length === 0) {
-    return res.status(400).json({ success: false, error: 'Missing participant information.' });
-  }
-
-  if (!waiver.signature_name || !/^data:image\/png;base64,/.test(String(waiver.signature_data_url || ''))) {
-    return res.status(400).json({ success: false, error: 'Missing signature.' });
-  }
+  const validationError = validateCoachingWaiver(waiver);
+  if (validationError) return res.status(400).json({ success: false, error: validationError });
 
   let pdfBuffer;
   let waiverId;
@@ -3496,12 +3629,242 @@ app.post('/coaching-waiver', async (req, res) => {
   return res.json({ success: true, waiver_id: waiverId });
 });
 
+app.get('/standalone-waiver-form/active', async (req, res) => {
+  try {
+    const form = await getActiveWaiverFormByPlacement('standalone');
+    return res.json({ success: true, form: form || getDefaultWaiverForm('standalone') });
+  } catch (err) {
+    console.error('Error loading active standalone waiver form:', err);
+    return res.status(500).json({ success: false, error: 'Unable to load waiver form.' });
+  }
+});
+
+app.get('/registration-waiver-form/active', async (req, res) => {
+  try {
+    const form = await getActiveWaiverFormByPlacement('registration');
+    return res.json({ success: true, form: form || getDefaultWaiverForm('registration') });
+  } catch (err) {
+    console.error('Error loading active registration waiver form:', err);
+    return res.status(500).json({ success: false, error: 'Unable to load waiver form.' });
+  }
+});
+
+app.get('/admin/waiver-forms', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(
+      `
+        SELECT form_id, title, waiver_text, is_active_standalone, is_active_registration, created_at, updated_at
+        FROM waiver_forms
+        ORDER BY is_active_standalone DESC, is_active_registration DESC, updated_at DESC, created_at DESC
+      `
+    );
+
+    return res.json({ success: true, forms: rows.map(serializeWaiverForm) });
+  } catch (err) {
+    console.error('Error listing waiver forms:', err);
+    return res.status(500).json({ success: false, error: 'Unable to list waiver forms.' });
+  }
+});
+
+app.post('/admin/waiver-forms', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const title = String(req.body?.title || '').trim();
+  const waiverText = String(req.body?.waiver_text || '').trim();
+  const isActiveStandalone = parseBoolean(req.body?.is_active_standalone);
+  const isActiveRegistration = parseBoolean(req.body?.is_active_registration);
+
+  if (!title || !waiverText) {
+    return res.status(400).json({ success: false, error: 'Title and waiver text are required.' });
+  }
+
+  const formId = crypto.randomUUID();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    if (isActiveStandalone) {
+      await client.query('UPDATE waiver_forms SET is_active_standalone = false, updated_at = NOW() WHERE is_active_standalone = true');
+    }
+    if (isActiveRegistration) {
+      await client.query('UPDATE waiver_forms SET is_active_registration = false, updated_at = NOW() WHERE is_active_registration = true');
+    }
+
+    const { rows } = await client.query(
+      `
+        INSERT INTO waiver_forms (form_id, title, waiver_text, is_active_standalone, is_active_registration)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING form_id, title, waiver_text, is_active_standalone, is_active_registration, created_at, updated_at
+      `,
+      [formId, title, waiverText, isActiveStandalone, isActiveRegistration]
+    );
+    await client.query('COMMIT');
+
+    return res.json({ success: true, form: serializeWaiverForm(rows[0]) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error creating waiver form:', err);
+    return res.status(500).json({ success: false, error: 'Unable to create waiver form.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.put('/admin/waiver-forms/:formId', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const title = String(req.body?.title || '').trim();
+  const waiverText = String(req.body?.waiver_text || '').trim();
+  const isActiveStandalone = parseBoolean(req.body?.is_active_standalone);
+  const isActiveRegistration = parseBoolean(req.body?.is_active_registration);
+
+  if (!title || !waiverText) {
+    return res.status(400).json({ success: false, error: 'Title and waiver text are required.' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    if (isActiveStandalone) {
+      await client.query('UPDATE waiver_forms SET is_active_standalone = false, updated_at = NOW() WHERE form_id <> $1', [req.params.formId]);
+    }
+    if (isActiveRegistration) {
+      await client.query('UPDATE waiver_forms SET is_active_registration = false, updated_at = NOW() WHERE form_id <> $1', [req.params.formId]);
+    }
+
+    const { rows } = await client.query(
+      `
+        UPDATE waiver_forms
+        SET title = $2,
+            waiver_text = $3,
+            is_active_standalone = $4,
+            is_active_registration = $5,
+            updated_at = NOW()
+        WHERE form_id = $1
+        RETURNING form_id, title, waiver_text, is_active_standalone, is_active_registration, created_at, updated_at
+      `,
+      [req.params.formId, title, waiverText, isActiveStandalone, isActiveRegistration]
+    );
+
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Waiver form not found.' });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, form: serializeWaiverForm(rows[0]) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating waiver form:', err);
+    return res.status(500).json({ success: false, error: 'Unable to update waiver form.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/standalone-waiver', async (req, res) => {
+  const waiver = {
+    ...req.body,
+    client_ip: getClientIpAddress(req),
+    submitted_at: new Date().toISOString()
+  };
+
+  if (!waiver.participant_type) waiver.participant_type = 'adult';
+  if (!Array.isArray(waiver.children)) waiver.children = [];
+  if (!waiver.waiver_text && !waiver.waiver_items) {
+    try {
+      const { rows } = await pool.query(
+        `
+          SELECT form_id, title, waiver_text
+          FROM waiver_forms
+          WHERE is_active_standalone = true
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `
+      );
+      if (rows.length) {
+        waiver.waiver_form_id = rows[0].form_id;
+        waiver.waiver_title = rows[0].title;
+        waiver.waiver_text = rows[0].waiver_text;
+      }
+    } catch (err) {
+      console.error('Unable to attach active waiver form text:', err);
+    }
+  }
+  waiver.waiver_title = waiver.waiver_title || COACHING_WAIVER_TITLE;
+  waiver.waiver_items = getWaiverAgreementItems(waiver);
+
+  if (waiver.participant_type === 'adult' || waiver.participant_type === 'adult_children') {
+    waiver.adult_first_name = waiver.adult_first_name || waiver.parent_first_name;
+    waiver.adult_last_name = waiver.adult_last_name || waiver.parent_last_name;
+    waiver.adult_dob = waiver.adult_dob || waiver.parent_dob;
+  }
+
+  const validationError = validateCoachingWaiver(waiver);
+  if (validationError) return res.status(400).json({ success: false, error: validationError });
+
+  let pdfBuffer;
+  let waiverId;
+
+  try {
+    pdfBuffer = await buildCoachingWaiverPdf(waiver);
+  } catch (err) {
+    console.error('Error creating standalone waiver PDF:', err);
+    return res.status(500).json({ success: false, error: 'Unable to create waiver PDF. Please try again.' });
+  }
+
+  try {
+    waiverId = await savePendingCoachingWaiver(waiver, pdfBuffer, { status: 'submitted' });
+  } catch (err) {
+    console.error('Error saving standalone waiver:', err);
+    return res.status(500).json({ success: false, error: 'Unable to save waiver. Please try again.' });
+  }
+
+  try {
+    await sendCoachingWaiverEmail(waiver.parent_email, pdfBuffer, waiver);
+    await markCoachingWaiverEmailed(waiverId);
+  } catch (err) {
+    console.error('Error emailing standalone waiver:', err);
+    return res.status(500).json({
+      success: false,
+      waiver_id: waiverId,
+      error: 'Waiver was saved, but the email could not be sent. Please contact support.'
+    });
+  }
+
+  return res.json({ success: true, waiver_id: waiverId });
+});
+
 app.get('/admin/coaching-waivers', async (req, res) => {
   if (!requireAdminKey(req, res)) return;
 
   const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10) || 25, 1), 100);
+  const search = String(req.query.q || '').trim();
+  const status = String(req.query.status || '').trim();
 
   try {
+    const filters = [];
+    const params = [];
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      filters.push(`(
+        LOWER(customer_email) LIKE $${params.length}
+        OR LOWER(parent_first_name) LIKE $${params.length}
+        OR LOWER(parent_last_name) LIKE $${params.length}
+        OR LOWER(COALESCE(participant_name, '')) LIKE $${params.length}
+        OR LOWER(waiver_id) LIKE $${params.length}
+        OR LOWER(COALESCE(order_name, '')) LIKE $${params.length}
+      )`);
+    }
+    if (status) {
+      params.push(status);
+      filters.push(`status = $${params.length}`);
+    }
+    params.push(limit);
+
     const { rows } = await pool.query(
       `
         SELECT
@@ -3523,10 +3886,11 @@ app.get('/admin/coaching-waivers', async (req, res) => {
           created_at,
           OCTET_LENGTH(pdf) AS pdf_size
         FROM coaching_waivers
+        ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
         ORDER BY created_at DESC
-        LIMIT $1
+        LIMIT $${params.length}
       `,
-      [limit]
+      params
     );
 
     return res.json({ success: true, waivers: rows });
