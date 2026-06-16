@@ -2609,12 +2609,32 @@ const COACHING_WAIVER_ITEMS = [
 ];
 const DEFAULT_WAIVER_TEXT = COACHING_WAIVER_ITEMS.join('\n\n');
 
+const decodeHtmlEntities = (value = '') =>
+  String(value || '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const htmlToPlainWaiverText = (value = '') =>
+  decodeHtmlEntities(String(value || '')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr|table|ul|ol)\s*>/gi, '\n')
+    .replace(/<\s*(p|div|h[1-6]|li|tr|table|ul|ol)(\s[^>]*)?>/gi, '\n')
+    .replace(/<[^>]+>/g, ''))
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
 const normalizeWaiverTextItems = (value) => {
   if (Array.isArray(value)) {
-    return value.map(item => String(item || '').trim()).filter(Boolean);
+    return value.map(item => htmlToPlainWaiverText(item)).filter(Boolean);
   }
 
-  return String(value || '')
+  return htmlToPlainWaiverText(value)
     .split(/\n\s*\n|\r?\n/)
     .map(item => item.replace(/^\s*\d+[\).]\s*/, '').trim())
     .filter(Boolean);
