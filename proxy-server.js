@@ -2773,6 +2773,12 @@ const renderWaiverTextInPdf = (doc, waiver) => {
   doc.font('Helvetica').fontSize(10);
 };
 
+const getSignatureImageBuffer = (signatureDataUrl = '') => {
+  const match = String(signatureDataUrl || '').match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
+  if (!match) return null;
+  return Buffer.from(match[2], 'base64');
+};
+
 const serializeWaiverForm = (row = {}) => ({
   form_id: row.form_id,
   title: row.title,
@@ -3651,14 +3657,21 @@ const buildCoachingWaiverPdf = (waiver) => new Promise((resolve, reject) => {
   renderWaiverTextInPdf(doc, waiver);
   doc.moveDown();
 
+  ensurePdfSpace(doc, 180);
   doc.fontSize(13).text('Signature', { underline: true });
   doc.fontSize(10).text(`Signed Name: ${waiver.signature_name || ''}`);
   doc.text(`Signed At: ${new Date(submittedAt).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET`);
   doc.moveDown(0.5);
 
-  if (waiver.signature_data_url) {
-    const signatureBuffer = Buffer.from(String(waiver.signature_data_url).replace(/^data:image\/png;base64,/, ''), 'base64');
-    doc.image(signatureBuffer, { fit: [250, 100] });
+  const signatureBuffer = getSignatureImageBuffer(waiver.signature_data_url);
+  if (signatureBuffer) {
+    ensurePdfSpace(doc, 125);
+    doc.rect(doc.x, doc.y, 260, 105).stroke('#cccccc');
+    doc.image(signatureBuffer, doc.x + 5, doc.y + 5, { fit: [250, 95] });
+    doc.moveDown(6);
+  } else {
+    doc.fontSize(9).fillColor('#b00020').text('Signature image was not available in the submitted waiver payload.');
+    doc.fillColor('black').fontSize(10);
   }
 
   doc.end();
@@ -3725,7 +3738,7 @@ const validateCoachingWaiver = (waiver, options = {}) => {
     return 'Missing participant information.';
   }
 
-  if (!waiver.signature_name || !/^data:image\/png;base64,/.test(String(waiver.signature_data_url || ''))) {
+  if (!waiver.signature_name || !/^data:image\/(png|jpeg|jpg);base64,/i.test(String(waiver.signature_data_url || ''))) {
     return 'Missing signature.';
   }
 
