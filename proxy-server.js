@@ -2587,6 +2587,33 @@ const escapeHtml = (value = '') =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+const parseEmailList = (value = '') =>
+  String(value || '')
+    .split(',')
+    .map(email => email.trim())
+    .filter(Boolean);
+
+const getEmailFrom = () => {
+  const raw = String(process.env.WAIVER_EMAIL_FROM || process.env.EMAIL_FROM || '').trim();
+  const match = raw.match(/^(.*?)<([^>]+)>$/);
+  if (match) {
+    return {
+      name: match[1].trim().replace(/^"|"$/g, '') || 'MLCA Coaching',
+      email: match[2].trim()
+    };
+  }
+  return raw;
+};
+
+const getSendgridErrorDetails = (err) => {
+  const body = err?.response?.body;
+  if (body?.errors?.length) {
+    return body.errors.map(error => error.message).join('; ');
+  }
+  if (body) return JSON.stringify(body);
+  return err?.message || 'Unknown email error';
+};
+
 const getClientIpAddress = (req) => {
   const forwardedFor = req.headers['x-forwarded-for'];
   if (forwardedFor) return String(forwardedFor).split(',')[0].trim();
@@ -3558,9 +3585,16 @@ async function sendCoachingWaiverEmail(toEmail, pdfBuffer, waiver) {
     <p>Thank you,<br>MLCA Coaching</p>
   `;
 
+  const adminEmails = parseEmailList(process.env.WAIVER_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '');
+  const recipients = [...new Set([toEmail, ...adminEmails].filter(Boolean))];
+
+  if (!recipients.length) {
+    throw new Error('No waiver email recipients configured.');
+  }
+
   await sgMail.send({
-    to: toEmail,
-    from: process.env.EMAIL_FROM,
+    to: recipients,
+    from: getEmailFrom(),
     subject: 'Signed Coaching Waiver',
     html,
     attachments: [{
@@ -3843,19 +3877,11 @@ app.post('/standalone-waiver', async (req, res) => {
     return res.status(500).json({ success: false, error: 'Unable to save waiver. Please try again.' });
   }
 
-  try {
-    await sendCoachingWaiverEmail(waiver.parent_email, pdfBuffer, waiver);
-    await markCoachingWaiverEmailed(waiverId);
-  } catch (err) {
-    console.error('Error emailing standalone waiver:', err);
-    return res.status(500).json({
-      success: false,
-      waiver_id: waiverId,
-      error: 'Waiver was saved, but the email could not be sent. Please contact support.'
-    });
-  }
-
-  return res.json({ success: true, waiver_id: waiverId });
+  return res.json({
+    success: true,
+    waiver_id: waiverId,
+    email_status: 'pending_make_email'
+  });
 });
 
 app.get('/admin/coaching-waivers', async (req, res) => {
@@ -3974,9 +4000,9 @@ app.get('/admin/coaching-waivers-pending-email', async (req, res) => {
           created_at,
           OCTET_LENGTH(pdf) AS pdf_size
         FROM coaching_waivers
-        WHERE status = 'paid'
+        WHERE status IN ('paid', 'submitted')
           AND emailed_at IS NULL
-        ORDER BY paid_at ASC NULLS LAST, created_at ASC
+        ORDER BY paid_at ASC NULLS LAST, submitted_at ASC NULLS LAST, created_at ASC
         LIMIT $1
       `,
       [limit]
