@@ -4311,6 +4311,81 @@ async function sendVacationConfirmationEmail(toEmail, updatedBillingAttempts) {
   console.log('Vacation confirmation email sent to', toEmail);
 }
 
+const getVacationScheduleAlertRecipients = () =>
+  parseEmailList(
+    process.env.VACATION_SCHEDULE_ALERT_EMAILS ||
+    process.env.VACATION_ADMIN_EMAILS ||
+    process.env.ADMIN_EMAILS ||
+    process.env.WAIVER_ADMIN_EMAILS ||
+    ''
+  );
+
+async function sendVacationScheduleUpdateAlert(context = {}) {
+  const recipients = getVacationScheduleAlertRecipients();
+  if (!recipients.length) {
+    console.error('Vacation schedule update alert skipped: no admin recipients configured.');
+    return { skipped: true, reason: 'missing_recipients' };
+  }
+
+  const rows = [
+    ['Vacation ID', context.vacation_id],
+    ['Customer ID', context.customer_id],
+    ['Customer Email', context.customer_email],
+    ['Participant', context.child_name],
+    ['Subscription ID', context.subscription_id],
+    ['Billing Attempt ID', context.billing_attempt_id],
+    ['Vacation Dates', `${context.from_date || ''} to ${context.to_date || ''}`],
+    ['Shift Days', context.shift_days],
+    ['Original Payment Date', context.original_payment_date],
+    ['Expected Payment Date', context.expected_payment_date],
+    ['Actual Payment Date', context.actual_payment_date],
+    ['Reason', context.alert_reason]
+  ];
+
+  const detailsHtml = rows
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([label, value]) => `
+      <tr>
+        <th align="left" style="padding:4px 8px;border:1px solid #ddd;">${escapeHtml(label)}</th>
+        <td style="padding:4px 8px;border:1px solid #ddd;">${escapeHtml(value)}</td>
+      </tr>
+    `).join('');
+
+  await sgMail.send({
+    to: recipients,
+    from: getEmailFrom() || process.env.EMAIL_FROM,
+    subject: 'Vacation schedule update needs manual review',
+    html: `
+      <p>A vacation request was saved, but the Seal payment schedule was not confirmed as updated.</p>
+      <table border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        ${detailsHtml}
+      </table>
+      <p>Please update the schedule manually in Seal if needed.</p>
+    `,
+    text: [
+      'A vacation request was saved, but the Seal payment schedule was not confirmed as updated.',
+      '',
+      ...rows
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([label, value]) => `${label}: ${value}`),
+      '',
+      'Please update the schedule manually in Seal if needed.'
+    ].join('\n')
+  });
+
+  console.log('Vacation schedule update alert sent to', recipients.join(', '));
+  return { success: true, recipients };
+}
+
+async function notifyVacationScheduleUpdateFailure(context) {
+  try {
+    return await sendVacationScheduleUpdateAlert(context);
+  } catch (err) {
+    console.error('Vacation schedule update alert failed:', getSendgridErrorDetails(err));
+    return { success: false, error: getSendgridErrorDetails(err) };
+  }
+}
+
 
 // -------------------- Submit vacation request (with overlap check + paid schedule validation) --------------------
 app.post('/vacation-request', async (req, res) => {
@@ -4435,21 +4510,126 @@ app.post('/vacation-request', async (req, res) => {
     `;
     const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null,customerEmail];
     const insertResult = await pool.query(insertSql, insertParams);
+    const savedVacation = insertResult.rows[0];
 
-    // 5) Prepare updated billing attempts (shifted by shift_days) for confirmation
-    const updatedBillingAttempts = billingAttempts.map(attempt => {
-      const origDate = new Date(attempt.date);
-      const newDate = new Date(origDate);
-      newDate.setDate(newDate.getDate() + Number(shift_days));
-      return { ...attempt, original_date: attempt.date, date: newDate.toISOString() };
-    });
+    let scheduleUpdate = {
+      attempted: false,
+      success: false,
+      status: 'not_attempted',
+      message: 'No upcoming unpaid billing attempt was found.'
+    };
+
+    const alertBase = {
+      vacation_id: savedVacation.id,
+      customer_id,
+      customer_email: customerEmail,
+      child_name,
+      subscription_id,
+      from_date,
+      to_date,
+      shift_days
+    };
+
+    const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
+    let latestBillingAttempts = billingAttempts;
+
+    if (!nextAttempt) {
+      await notifyVacationScheduleUpdateFailure({
+        ...alertBase,
+        billing_attempt_id,
+        alert_reason: 'No upcoming unpaid billing attempt was found after the vacation request was saved.'
+      });
+    } else if (!nextAttempt.id) {
+      await notifyVacationScheduleUpdateFailure({
+        ...alertBase,
+        billing_attempt_id,
+        original_payment_date: nextAttempt.date,
+        expected_payment_date: addDaysToDateString(nextAttempt.date, shift_days),
+        alert_reason: 'The upcoming unpaid billing attempt is missing an ID, so it could not be rescheduled.'
+      });
+      scheduleUpdate = {
+        attempted: false,
+        success: false,
+        status: 'missing_billing_attempt_id',
+        message: 'Upcoming billing attempt is missing an ID.'
+      };
+    } else {
+      const newPaymentDate = addDaysToDateString(nextAttempt.date, shift_days);
+      scheduleUpdate = {
+        attempted: true,
+        success: false,
+        status: 'failed',
+        billing_attempt_id: nextAttempt.id,
+        original_payment_date: nextAttempt.date,
+        expected_payment_date: newPaymentDate
+      };
+
+      try {
+        await rescheduleSealBillingAttempt({
+          billingAttemptId: nextAttempt.id,
+          subscriptionId: subscription_id,
+          date: newPaymentDate
+        });
+
+        const refreshedDetail = await fetchSealSubscriptionDetail(subscription_id);
+        latestBillingAttempts = refreshedDetail.billing_attempts || [];
+        const refreshedAttempt = latestBillingAttempts.find(attempt => String(attempt.id) === String(nextAttempt.id));
+        const actualPaymentDate = refreshedAttempt?.date ? String(refreshedAttempt.date).slice(0, 10) : '';
+
+        if (actualPaymentDate !== newPaymentDate) {
+          await notifyVacationScheduleUpdateFailure({
+            ...alertBase,
+            billing_attempt_id: nextAttempt.id,
+            original_payment_date: nextAttempt.date,
+            expected_payment_date: newPaymentDate,
+            actual_payment_date: refreshedAttempt?.date,
+            alert_reason: 'Seal accepted the reschedule request, but the refreshed billing attempt date did not match the expected date.'
+          });
+          scheduleUpdate = {
+            ...scheduleUpdate,
+            status: 'unconfirmed',
+            actual_payment_date: refreshedAttempt?.date || null,
+            message: 'Schedule update could not be confirmed.'
+          };
+        } else {
+          scheduleUpdate = {
+            ...scheduleUpdate,
+            success: true,
+            status: 'updated',
+            actual_payment_date: refreshedAttempt.date
+          };
+        }
+      } catch (err) {
+        await notifyVacationScheduleUpdateFailure({
+          ...alertBase,
+          billing_attempt_id: nextAttempt.id,
+          original_payment_date: nextAttempt.date,
+          expected_payment_date: newPaymentDate,
+          alert_reason: err.message || 'Seal reschedule request failed.'
+        });
+        scheduleUpdate = {
+          ...scheduleUpdate,
+          status: 'failed',
+          message: err.message || 'Schedule update failed.'
+        };
+      }
+    }
+
+    // 5) Return the latest Seal attempts; include the original date for the attempt we moved.
+    const updatedBillingAttempts = latestBillingAttempts.map(attempt => ({
+      ...attempt,
+      original_date: nextAttempt && String(attempt.id) === String(nextAttempt.id)
+        ? nextAttempt.date
+        : attempt.date
+    }));
 
     
 
     return res.json({ 
       success: true, 
-      updated: { billing_attempts: updatedBillingAttempts }, 
-      id: insertResult.rows[0].id 
+      updated: { billing_attempts: updatedBillingAttempts },
+      schedule_update: scheduleUpdate,
+      id: savedVacation.id
     });
 
   } catch (err) {
