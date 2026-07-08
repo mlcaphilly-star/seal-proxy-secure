@@ -781,6 +781,44 @@ async function rescheduleSealBillingAttempt({ billingAttemptId, subscriptionId, 
   return result;
 }
 
+function isSealScheduleConflictError(err) {
+  const message = String(err?.message || '').toLowerCase();
+  return (
+    message.includes('schedule') &&
+    (
+      message.includes('already') ||
+      message.includes('exist') ||
+      message.includes('conflict') ||
+      message.includes('duplicate')
+    )
+  );
+}
+
+async function rescheduleSealBillingAttemptWithConflictRetry({ billingAttemptId, subscriptionId, date }) {
+  try {
+    const result = await rescheduleSealBillingAttempt({ billingAttemptId, subscriptionId, date });
+    return { result, date, retry_used: false };
+  } catch (err) {
+    if (!isSealScheduleConflictError(err)) {
+      throw err;
+    }
+
+    const retryDate = addDaysToDateString(date, -1);
+    const result = await rescheduleSealBillingAttempt({
+      billingAttemptId,
+      subscriptionId,
+      date: retryDate
+    });
+
+    return {
+      result,
+      date: retryDate,
+      retry_used: true,
+      first_error: err.message || 'Seal schedule conflict.'
+    };
+  }
+}
+
 // -------------------- Admin Seal Report (ACTIVE ONLY) --------------------
 app.get('/admin/seal-report', async (req, res) => {
   const adminKey = req.query.key;
@@ -4565,28 +4603,34 @@ app.post('/vacation-request', async (req, res) => {
       };
 
       try {
-        await rescheduleSealBillingAttempt({
+        const rescheduleResult = await rescheduleSealBillingAttemptWithConflictRetry({
           billingAttemptId: nextAttempt.id,
           subscriptionId: subscription_id,
           date: newPaymentDate
         });
+        const confirmedPaymentDate = rescheduleResult.date;
 
         const refreshedDetail = await fetchSealSubscriptionDetail(subscription_id);
         latestBillingAttempts = refreshedDetail.billing_attempts || [];
         const refreshedAttempt = latestBillingAttempts.find(attempt => String(attempt.id) === String(nextAttempt.id));
         const actualPaymentDate = refreshedAttempt?.date ? String(refreshedAttempt.date).slice(0, 10) : '';
 
-        if (actualPaymentDate !== newPaymentDate) {
+        if (actualPaymentDate !== confirmedPaymentDate) {
           await notifyVacationScheduleUpdateFailure({
             ...alertBase,
             billing_attempt_id: nextAttempt.id,
             original_payment_date: nextAttempt.date,
-            expected_payment_date: newPaymentDate,
+            expected_payment_date: confirmedPaymentDate,
             actual_payment_date: refreshedAttempt?.date,
-            alert_reason: 'Seal accepted the reschedule request, but the refreshed billing attempt date did not match the expected date.'
+            alert_reason: rescheduleResult.retry_used
+              ? `Seal accepted the one-day-earlier retry after conflict (${rescheduleResult.first_error}), but the refreshed billing attempt date did not match the expected date.`
+              : 'Seal accepted the reschedule request, but the refreshed billing attempt date did not match the expected date.'
           });
           scheduleUpdate = {
             ...scheduleUpdate,
+            expected_payment_date: confirmedPaymentDate,
+            retry_used: rescheduleResult.retry_used,
+            first_error: rescheduleResult.first_error || null,
             status: 'unconfirmed',
             actual_payment_date: refreshedAttempt?.date || null,
             message: 'Schedule update could not be confirmed.'
@@ -4594,8 +4638,11 @@ app.post('/vacation-request', async (req, res) => {
         } else {
           scheduleUpdate = {
             ...scheduleUpdate,
+            expected_payment_date: confirmedPaymentDate,
+            retry_used: rescheduleResult.retry_used,
+            first_error: rescheduleResult.first_error || null,
             success: true,
-            status: 'updated',
+            status: rescheduleResult.retry_used ? 'updated_after_conflict_retry' : 'updated',
             actual_payment_date: refreshedAttempt.date
           };
         }
