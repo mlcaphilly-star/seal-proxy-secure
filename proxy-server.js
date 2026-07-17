@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS vacation_requests (
   to_date DATE NOT NULL,
   shift_days INT NOT NULL,
   reason TEXT,
+  product_title TEXT,
   subscription_id TEXT NOT NULL,
   billing_attempt_id TEXT
 );
@@ -168,6 +169,10 @@ CREATE TABLE IF NOT EXISTS vacation_requests (
 pool.query(createTableSQL)
   .then(() => console.log('vacation_requests table ready'))
   .catch(err => console.error('Error creating vacation_requests table:', err));
+
+pool.query('ALTER TABLE vacation_requests ADD COLUMN IF NOT EXISTS product_title TEXT')
+  .then(() => console.log('vacation_requests product_title column ready'))
+  .catch(err => console.error('Error creating vacation_requests product_title column:', err));
 
 const createBulkCreditTableSQL = `
 CREATE TABLE IF NOT EXISTS bulk_credit_requests (
@@ -625,6 +630,24 @@ async function fetchActiveParticipants() {
   return participants;
 }
 
+async function enrichVacationRowsWithParticipantDetails(rows = []) {
+  const participants = await fetchActiveParticipants();
+  const participantMap = new Map(participants.map(participant => [participant.subscription_id, participant]));
+
+  return rows.map(row => {
+    const participant = participantMap.get(String(row.subscription_id)) || {};
+    return {
+      ...row,
+      participant_name: participant.participant_name || row.child_name || '',
+      parent_name: participant.parent_name || '',
+      parent_mobile: participant.parent_mobile || '',
+      cricclub_id: participant.cricclub_id || '',
+      program_level: participant.program_level || '',
+      product_title: row.product_title || participant.product_title || ''
+    };
+  });
+}
+
 async function getCurrentBatchAssignments(subscriptionIds = [], asOfDate = null) {
   if (!subscriptionIds.length) return new Map();
 
@@ -1055,6 +1078,7 @@ app.get('/admin/current-vacations', async (req, res) => {
         to_date::text,
         shift_days,
         reason,
+        product_title,
         subscription_id,
         billing_attempt_id
       FROM vacation_requests
@@ -1063,12 +1087,13 @@ app.get('/admin/current-vacations', async (req, res) => {
       ORDER BY to_date ASC, child_name ASC
     `;
     const { rows } = await pool.query(sql, [today]);
+    const vacations = await enrichVacationRowsWithParticipantDetails(rows);
 
     return res.json({
       success: true,
       report_date: today,
-      count: rows.length,
-      vacations: rows
+      count: vacations.length,
+      vacations
     });
   } catch (err) {
     console.error('Admin current vacations error:', err);
@@ -2150,6 +2175,7 @@ app.get('/coach/vacation-report', async (req, res) => {
         vr.to_date::text,
         vr.shift_days,
         vr.reason,
+        vr.product_title,
         vr.subscription_id,
         vr.billing_attempt_id
       FROM vacation_requests vr
@@ -2157,24 +2183,12 @@ app.get('/coach/vacation-report', async (req, res) => {
       ORDER BY vr.from_date DESC, vr.to_date DESC, vr.child_name ASC
     `;
     const { rows } = await pool.query(sql, params);
-    const participants = await fetchActiveParticipants();
-    const participantMap = new Map(participants.map(participant => [participant.subscription_id, participant]));
+    const vacations = await enrichVacationRowsWithParticipantDetails(rows);
 
     return res.json({
       success: true,
-      count: rows.length,
-      vacations: rows.map(row => {
-        const participant = participantMap.get(String(row.subscription_id)) || {};
-        return {
-          ...row,
-          participant_name: participant.participant_name || row.child_name || '',
-          parent_name: participant.parent_name || '',
-          parent_mobile: participant.parent_mobile || '',
-          cricclub_id: participant.cricclub_id || '',
-          program_level: participant.program_level || '',
-          product_title: participant.product_title || ''
-        };
-      })
+      count: vacations.length,
+      vacations
     });
   } catch (err) {
     console.error('Coach vacation report error:', err);
@@ -2599,7 +2613,7 @@ app.get('/vacations', async (req, res) => {
 
   try {
     const sql = `
-      SELECT from_date::text, to_date::text, shift_days, reason
+      SELECT from_date::text, to_date::text, shift_days, reason, product_title
       FROM vacation_requests
       WHERE customer_id = $1 AND child_name = $2
       ORDER BY from_date DESC
@@ -4370,6 +4384,7 @@ async function sendVacationScheduleUpdateAlert(context = {}) {
     ['Customer ID', context.customer_id],
     ['Customer Email', context.customer_email],
     ['Participant', context.child_name],
+    ['Product', context.product_title],
     ['Subscription ID', context.subscription_id],
     ['Billing Attempt ID', context.billing_attempt_id],
     ['Vacation Dates', `${context.from_date || ''} to ${context.to_date || ''}`],
@@ -4478,7 +4493,9 @@ app.post('/vacation-request', async (req, res) => {
 
     const subscriptionData = await sealRes.json();
     const billingAttempts = subscriptionData.payload?.billing_attempts || [];
-	const customerEmail = subscriptionData.payload?.email;
+    const subscriptionItems = subscriptionData.payload?.items || [];
+    const productTitle = subscriptionItems[0]?.title || '';
+    const customerEmail = subscriptionData.payload?.email;
 
     // 2) Compute firstBillingAttemptDate based on unpaid/future attempts
     let firstBillingAttemptDate = null;
@@ -4542,11 +4559,11 @@ app.post('/vacation-request', async (req, res) => {
     // 4) Insert vacation request
     const insertSql = `
       INSERT INTO vacation_requests
-      (customer_id, child_name, from_date, to_date, shift_days, reason, subscription_id, billing_attempt_id, email_sent,email_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'N',$9)
-      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, subscription_id, billing_attempt_id,email_id
+      (customer_id, child_name, from_date, to_date, shift_days, reason, product_title, subscription_id, billing_attempt_id, email_sent,email_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'N',$10)
+      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, product_title, subscription_id, billing_attempt_id,email_id
     `;
-    const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, subscription_id, billing_attempt_id || null,customerEmail];
+    const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, productTitle || null, subscription_id, billing_attempt_id || null,customerEmail];
     const insertResult = await pool.query(insertSql, insertParams);
     const savedVacation = insertResult.rows[0];
 
@@ -4562,6 +4579,7 @@ app.post('/vacation-request', async (req, res) => {
       customer_id,
       customer_email: customerEmail,
       child_name,
+      product_title: productTitle,
       subscription_id,
       from_date,
       to_date,
