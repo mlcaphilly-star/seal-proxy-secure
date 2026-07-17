@@ -606,6 +606,11 @@ function participantFromSubscriptionDetail(sub, detail) {
   };
 }
 
+function getProductTitleFromSubscriptionDetail(detail = {}) {
+  const item = detail.items?.[0];
+  return String(item?.title || '').trim();
+}
+
 async function fetchActiveParticipants() {
   const subscriptions = await fetchActiveSealSubscriptions();
   const participants = [];
@@ -646,6 +651,72 @@ async function enrichVacationRowsWithParticipantDetails(rows = []) {
       product_title: row.product_title || participant.product_title || ''
     };
   });
+}
+
+async function backfillVacationProductTitles() {
+  const { rows } = await pool.query(`
+    SELECT DISTINCT subscription_id
+    FROM vacation_requests
+    WHERE subscription_id IS NOT NULL
+      AND subscription_id <> ''
+      AND (product_title IS NULL OR product_title = '')
+    ORDER BY subscription_id
+  `);
+
+  const results = [];
+  let updatedRows = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+
+  for (const row of rows) {
+    const subscriptionId = String(row.subscription_id || '').trim();
+    try {
+      const detail = await fetchSealSubscriptionDetail(subscriptionId);
+      const productTitle = getProductTitleFromSubscriptionDetail(detail);
+
+      if (!productTitle) {
+        skippedCount += 1;
+        results.push({
+          subscription_id: subscriptionId,
+          status: 'skipped',
+          error: 'No product title found in Seal subscription.'
+        });
+        continue;
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE vacation_requests
+         SET product_title = $1
+         WHERE subscription_id = $2
+           AND (product_title IS NULL OR product_title = '')`,
+        [productTitle, subscriptionId]
+      );
+
+      updatedRows += updateResult.rowCount || 0;
+      results.push({
+        subscription_id: subscriptionId,
+        product_title: productTitle,
+        updated_rows: updateResult.rowCount || 0,
+        status: 'updated'
+      });
+    } catch (err) {
+      failedCount += 1;
+      results.push({
+        subscription_id: subscriptionId,
+        status: 'failed',
+        error: err.message || 'Unable to backfill product title.'
+      });
+    }
+  }
+
+  return {
+    success: true,
+    subscriptions_checked: rows.length,
+    updated_rows: updatedRows,
+    skipped_count: skippedCount,
+    failed_count: failedCount,
+    results
+  };
 }
 
 async function getCurrentBatchAssignments(subscriptionIds = [], asOfDate = null) {
@@ -1098,6 +1169,18 @@ app.get('/admin/current-vacations', async (req, res) => {
   } catch (err) {
     console.error('Admin current vacations error:', err);
     return res.status(500).json({ success: false, error: 'Failed to load current vacations.' });
+  }
+});
+
+app.post('/admin/vacations/backfill-products', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const result = await backfillVacationProductTitles();
+    return res.json(result);
+  } catch (err) {
+    console.error('Vacation product backfill error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to backfill vacation products.' });
   }
 });
 
