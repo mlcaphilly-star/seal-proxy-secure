@@ -606,6 +606,31 @@ function participantFromSubscriptionDetail(sub, detail) {
   };
 }
 
+async function getShopifyOrderNames(orderIds = []) {
+  const shop = String(process.env.SHOP || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const token = String(process.env.SHOPIFY_ADMIN_TOKEN || '').trim();
+  const uniqueIds = [...new Set(orderIds.map(id => String(id || '').trim()).filter(Boolean))];
+  const names = new Map();
+
+  if (!shop || !token || uniqueIds.length === 0) return names;
+
+  await Promise.all(uniqueIds.map(async orderId => {
+    try {
+      const response = await fetch(`https://${shop}/admin/api/2025-10/orders/${encodeURIComponent(orderId)}.json?fields=id,name,order_number`, {
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' }
+      });
+      if (!response.ok) return;
+      const order = (await response.json()).order || {};
+      const displayName = String(order.name || order.order_number || '').replace(/^#/, '');
+      if (displayName) names.set(orderId, displayName);
+    } catch (err) {
+      console.error(`Unable to resolve Shopify order number ${orderId}:`, err.message || err);
+    }
+  }));
+
+  return names;
+}
+
 function getProductTitleFromSubscriptionDetail(detail = {}) {
   const item = detail.items?.[0];
   return String(item?.title || '').trim();
@@ -924,11 +949,11 @@ app.get('/admin/seal-report', async (req, res) => {
   try {
     let page = 1;
     let hasMore = true;
-    let allSubscriptions = [];
+    const subscriptionsById = new Map();
 
     while (hasMore) {
       const apiRes = await fetch(
-        `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}`,
+        `https://app.sealsubscriptions.com/shopify/merchant/api/subscriptions?page=${page}&with-items=true&with-billing-attempts=true`,
         {
           headers: {
             'X-Seal-Token': SEAL_TOKEN,
@@ -945,14 +970,21 @@ app.get('/admin/seal-report', async (req, res) => {
       const data = await apiRes.json();
       const subs = data.payload?.subscriptions || [];
 
-      // ✅ FILTER ACTIVE ONLY HERE
+      // Fetch every subscription type, including recurring invoices, and apply
+      // the active-status check locally for consistent report results.
       const activeSubs = subs.filter(isActiveSubscription);
 
-      allSubscriptions.push(...activeSubs);
+      for (const subscription of activeSubs) {
+        subscriptionsById.set(String(subscription.id), subscription);
+      }
 
+      // A short page is not guaranteed to be the final page. Continue until
+      // Seal explicitly returns no subscriptions.
       hasMore = subs.length > 0;
       page++;
     }
+
+    const allSubscriptions = Array.from(subscriptionsById.values());
 
     const header = [
       'Subscription ID',
@@ -968,31 +1000,41 @@ app.get('/admin/seal-report', async (req, res) => {
     ];
     const rows = [];
 
+    let detailFallbackCount = 0;
+    let missingItemCount = 0;
+    let oneTimeOnlyCount = 0;
+
     for (const sub of allSubscriptions) {
+      // The list request normally includes items. Some recurring-invoice and
+      // manually edited subscriptions can omit them, so fetch details only for
+      // those subscriptions instead of silently dropping the row.
+      let reportSubscription = sub;
+      let items = Array.isArray(sub.items) ? sub.items : [];
 
-      const detailRes = await fetch(
-        `https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${sub.id}`,
-        {
-          headers: {
-            'X-Seal-Token': SEAL_TOKEN,
-            'Content-Type': 'application/json'
-          }
+      if (items.length === 0) {
+        try {
+          reportSubscription = await fetchSealSubscriptionDetail(sub.id);
+          items = Array.isArray(reportSubscription.items) ? reportSubscription.items : [];
+          detailFallbackCount++;
+        } catch (detailErr) {
+          console.error(`Seal report detail fallback failed for subscription ${sub.id}:`, detailErr.message || detailErr);
         }
+      }
+
+      const recurringItems = items.filter(item =>
+        Number(item?.is_one_time_item ?? item?.one_time ?? 0) !== 1
       );
+      const item = recurringItems[0] || items[0] || {};
 
-      if (!detailRes.ok) continue;
-
-      const detailData = await detailRes.json();
-      const detail = detailData.payload || {};
-      const item = detail.items?.[0];
-      if (!item) continue;
+      if (items.length === 0) missingItemCount++;
+      if (items.length > 0 && recurringItems.length === 0) oneTimeOnlyCount++;
 
       const props = item.properties || [];
       const childFullName = `${getItemProperty(props, 'Child First Name')} ${getItemProperty(props, 'Child Last Name')}`.trim();
       const participantName = getItemProperty(props, 'Participant Name') || childFullName;
       const parentName = `${getItemProperty(props, 'Parent First Name')} ${getItemProperty(props, 'Parent Last Name')}`.trim();
 
-      const billingAttempts = detail.billing_attempts || [];
+      const billingAttempts = reportSubscription.billing_attempts || sub.billing_attempts || [];
       const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
 
       rows.push([
@@ -1001,13 +1043,21 @@ app.get('/admin/seal-report', async (req, res) => {
         participantName,
         parentName,
         getItemProperty(props, 'Parent Mobile'),
-        getItemProperty(props, 'Parent Email') || detail.email || '',
+        getItemProperty(props, 'Parent Email') || reportSubscription.email || sub.email || '',
         getItemProperty(props, 'Program Level'),
         getItemProperty(props, 'Child DOB'),
         getItemProperty(props, 'Child CricClub ID'),
         nextAttempt?.date || ''
       ]);
     }
+
+    console.log('Active Seal subscription report reconciliation:', {
+      active_subscriptions: allSubscriptions.length,
+      exported_rows: rows.length,
+      detail_fallbacks: detailFallbackCount,
+      subscriptions_without_items: missingItemCount,
+      subscriptions_with_only_one_time_items: oneTimeOnlyCount
+    });
 
     const csv = [header, ...rows].map(row => row.map(escapeCsv).join(',')).join('\n') + '\n';
 
@@ -2636,15 +2686,41 @@ app.get('/enrollments', async (req, res) => {
         const billingAttempts = detail.billing_attempts || [];
         const nextAttempt = billingAttempts.find(a => new Date(a.date) >= now) || null;
 
-        const previousPayments = billingAttempts
-          .filter(a => new Date(a.date) < now)
-          .slice(-4)
-          .map(a => ({
-            date: a.date,
-            amount: item.price ? `$${item.price}` : "",
-            status: a.status || "unknown",
-            id: a.id || null
-          }));
+        const paymentAmount = item.final_price || item.price || detail.final_amount || '';
+        const normalizedAttempts = billingAttempts
+          .filter(attempt => attempt.date)
+          .map(attempt => ({
+            id: attempt.id || null,
+            date: attempt.date,
+            completed_at: attempt.completed_at || '',
+            status: attempt.status || '',
+            order_id: attempt.order_id || ''
+          }))
+          .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        const paymentHistory = [];
+        if (detail.order_placed || detail.order_id) {
+          paymentHistory.push({
+            billing_attempt_id: null,
+            order_id: detail.order_id || '',
+            payment_date: detail.order_placed || '',
+            amount: paymentAmount
+          });
+        }
+        for (const attempt of normalizedAttempts) {
+          const status = String(attempt.status || '').toLowerCase();
+          if (!attempt.order_id && status !== 'completed' && !attempt.completed_at) continue;
+          if (attempt.order_id && paymentHistory.some(payment => String(payment.order_id) === String(attempt.order_id))) continue;
+          paymentHistory.push({
+            billing_attempt_id: attempt.id,
+            order_id: attempt.order_id,
+            payment_date: attempt.completed_at || attempt.date,
+            amount: paymentAmount
+          });
+        }
+        const recentPaymentHistory = paymentHistory
+          .sort((a, b) => new Date(a.payment_date) - new Date(b.payment_date))
+          .slice(-5);
 
         enrollments.push({
           subscription_id: sub.id,
@@ -2658,9 +2734,11 @@ app.get('/enrollments', async (req, res) => {
           payment_frequency: getProp('Billing Interval') || sub.billing_interval || "",
           next_payment_date: nextAttempt?.date || "",
           next_billing_attempt_id: nextAttempt?.id || null,
-          next_payment_amount: item.price ? `$${item.price}` : "",
+          next_payment_amount: paymentAmount !== '' ? `$${paymentAmount}` : "",
           parent_email: email,
-          previous_payments: previousPayments
+          payment_history: recentPaymentHistory,
+          billing_attempts: normalizedAttempts,
+          vacations: []
         });
       } catch (innerErr) {
         console.error('Error processing subscription detail for', sub.id, innerErr);
@@ -2671,6 +2749,36 @@ app.get('/enrollments', async (req, res) => {
     const assignmentMap = await getCurrentBatchAssignments(enrollments.map(enrollment => String(enrollment.subscription_id)));
     for (const enrollment of enrollments) {
       enrollment.current_assignments = assignmentMap.get(String(enrollment.subscription_id)) || [];
+    }
+
+    if (enrollments.length) {
+      const subscriptionIds = enrollments.map(enrollment => String(enrollment.subscription_id));
+      const { rows: vacationRows } = await pool.query(
+        `SELECT subscription_id, billing_attempt_id, from_date::text, to_date::text, shift_days
+         FROM vacation_requests
+         WHERE subscription_id = ANY($1::text[])
+         ORDER BY from_date ASC`,
+        [subscriptionIds]
+      );
+      const vacationsBySubscription = new Map();
+      for (const vacation of vacationRows) {
+        const key = String(vacation.subscription_id);
+        if (!vacationsBySubscription.has(key)) vacationsBySubscription.set(key, []);
+        vacationsBySubscription.get(key).push(vacation);
+      }
+      for (const enrollment of enrollments) {
+        enrollment.vacations = vacationsBySubscription.get(String(enrollment.subscription_id)) || [];
+      }
+    }
+
+    const orderIds = enrollments.flatMap(enrollment =>
+      (enrollment.payment_history || []).map(payment => payment.order_id)
+    );
+    const orderNames = await getShopifyOrderNames(orderIds);
+    for (const enrollment of enrollments) {
+      for (const payment of enrollment.payment_history || []) {
+        payment.order_number = orderNames.get(String(payment.order_id || '')) || String(payment.order_id || '').replace(/^#/, '');
+      }
     }
 
     // 2026-04-25: Sort active enrollments by child name for consistent dropdown ordering.
