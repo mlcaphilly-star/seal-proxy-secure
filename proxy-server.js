@@ -51,14 +51,49 @@ const findSubscriptionItemByProduct = (subscription, normalizedProductName) =>
     normalizeProductName(item.title || '') === normalizedProductName
   ) || null;
 
-const getItemProperty = (properties = [], key) => {
-  const searchKey = key.trim().toLowerCase();
+const normalizePropertyKey = (value = '') =>
+  String(value).replace(/^_+|:+$/g, '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
 
-  for (const p of properties || []) {
-    const normalized = (p.key || '').replace(/:+$/, '').trim().toLowerCase();
-    if (normalized === searchKey) return p.value || '';
+const normalizeItemProperties = (properties = []) => {
+  let source = properties;
+
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch (_) {
+      return [];
+    }
   }
 
+  if (Array.isArray(source)) return source;
+  if (source && typeof source === 'object') {
+    return Object.entries(source).map(([key, value]) => ({ key, value }));
+  }
+
+  return [];
+};
+
+const getItemProperties = (item = {}) => [
+  ...normalizeItemProperties(item.properties),
+  ...normalizeItemProperties(item.product_properties)
+];
+
+const getItemProperty = (properties = [], key) => {
+  const searchKey = normalizePropertyKey(key);
+
+  for (const property of normalizeItemProperties(properties)) {
+    const normalized = normalizePropertyKey(property?.key ?? property?.name ?? property?.label);
+    if (normalized === searchKey) return property?.value ?? property?.value_text ?? '';
+  }
+
+  return '';
+};
+
+const getFirstItemProperty = (properties = [], keys = []) => {
+  for (const key of keys) {
+    const value = getItemProperty(properties, key);
+    if (String(value).trim()) return value;
+  }
   return '';
 };
 
@@ -1010,29 +1045,36 @@ app.get('/admin/seal-report', async (req, res) => {
       // those subscriptions instead of silently dropping the row.
       let reportSubscription = sub;
       let items = Array.isArray(sub.items) ? sub.items : [];
+      let recurringItems = items.filter(item =>
+        Number(item?.is_one_time_item ?? item?.one_time ?? 0) !== 1
+      );
+      let item = recurringItems[0] || items[0] || {};
+      let props = getItemProperties(item);
 
-      if (items.length === 0) {
+      // List responses can contain item summaries without Shopify enrollment
+      // properties. Fetch the full subscription only when those fields are absent.
+      if (items.length === 0 || props.length === 0) {
         try {
           reportSubscription = await fetchSealSubscriptionDetail(sub.id);
           items = Array.isArray(reportSubscription.items) ? reportSubscription.items : [];
+          recurringItems = items.filter(detailItem =>
+            Number(detailItem?.is_one_time_item ?? detailItem?.one_time ?? 0) !== 1
+          );
+          item = recurringItems[0] || items[0] || {};
+          props = getItemProperties(item);
           detailFallbackCount++;
         } catch (detailErr) {
           console.error(`Seal report detail fallback failed for subscription ${sub.id}:`, detailErr.message || detailErr);
         }
       }
 
-      const recurringItems = items.filter(item =>
-        Number(item?.is_one_time_item ?? item?.one_time ?? 0) !== 1
-      );
-      const item = recurringItems[0] || items[0] || {};
-
       if (items.length === 0) missingItemCount++;
       if (items.length > 0 && recurringItems.length === 0) oneTimeOnlyCount++;
 
-      const props = item.properties || [];
       const childFullName = `${getItemProperty(props, 'Child First Name')} ${getItemProperty(props, 'Child Last Name')}`.trim();
-      const participantName = getItemProperty(props, 'Participant Name') || childFullName;
-      const parentName = `${getItemProperty(props, 'Parent First Name')} ${getItemProperty(props, 'Parent Last Name')}`.trim();
+      const participantName = getFirstItemProperty(props, ['Participant Name', 'Child Name']) || childFullName;
+      const parentFullName = `${getItemProperty(props, 'Parent First Name')} ${getItemProperty(props, 'Parent Last Name')}`.trim();
+      const parentName = getFirstItemProperty(props, ['Parent Name', 'Guardian Name']) || parentFullName;
 
       const billingAttempts = reportSubscription.billing_attempts || sub.billing_attempts || [];
       const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
@@ -1042,11 +1084,11 @@ app.get('/admin/seal-report', async (req, res) => {
         item.title,
         participantName,
         parentName,
-        getItemProperty(props, 'Parent Mobile'),
+        getFirstItemProperty(props, ['Parent Mobile', 'Parent Phone', 'Phone']),
         getItemProperty(props, 'Parent Email') || reportSubscription.email || sub.email || '',
-        getItemProperty(props, 'Program Level'),
-        getItemProperty(props, 'Child DOB'),
-        getItemProperty(props, 'Child CricClub ID'),
+        getFirstItemProperty(props, ['Program Level', 'Program']) || item.title || '',
+        getFirstItemProperty(props, ['Child DOB', 'Participant DOB', 'Date of Birth', 'DOB']),
+        getFirstItemProperty(props, ['Child CricClub ID', 'CricClub ID', 'CricClubID']),
         nextAttempt?.date || ''
       ]);
     }
