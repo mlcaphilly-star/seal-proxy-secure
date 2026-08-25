@@ -666,6 +666,43 @@ async function getShopifyOrderNames(orderIds = []) {
   return names;
 }
 
+async function getShopifyCustomerPhoneByEmail(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const shop = String(process.env.SHOP || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const token = String(process.env.SHOPIFY_ADMIN_TOKEN || '').trim();
+
+  if (!normalizedEmail || !shop || !token) return '';
+
+  const apiVersion = process.env.SHOPIFY_API_VERSION || '2024-10';
+  const url = `https://${shop}/admin/api/${apiVersion}/customers/search.json?query=${encodeURIComponent(`email:${normalizedEmail}`)}&limit=10`;
+  const response = await fetch(url, {
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Shopify customer phone lookup failed (${response.status}): ${body.slice(0, 160)}`);
+  }
+
+  const data = await response.json();
+  const customers = Array.isArray(data.customers) ? data.customers : [];
+  const customer = customers.find(candidate =>
+    String(candidate.email || '').trim().toLowerCase() === normalizedEmail
+  );
+
+  if (!customer) return '';
+
+  return String(
+    customer.phone ||
+    customer.default_address?.phone ||
+    customer.addresses?.find(address => String(address?.phone || '').trim())?.phone ||
+    ''
+  ).trim();
+}
+
 function getProductTitleFromSubscriptionDetail(detail = {}) {
   const item = detail.items?.[0];
   return String(item?.title || '').trim();
@@ -1038,6 +1075,9 @@ app.get('/admin/seal-report', async (req, res) => {
     let detailFallbackCount = 0;
     let missingItemCount = 0;
     let oneTimeOnlyCount = 0;
+    let shopifyPhoneFallbackCount = 0;
+    let shopifyPhoneLookupFailureCount = 0;
+    const shopifyPhoneByEmail = new Map();
 
     for (const sub of allSubscriptions) {
       // The list request normally includes items. Some recurring-invoice and
@@ -1078,14 +1118,32 @@ app.get('/admin/seal-report', async (req, res) => {
 
       const billingAttempts = reportSubscription.billing_attempts || sub.billing_attempts || [];
       const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
+      const parentEmail = getItemProperty(props, 'Parent Email') || reportSubscription.email || sub.email || '';
+      let parentMobile = getFirstItemProperty(props, ['Parent Mobile', 'Parent Phone', 'Phone']);
+
+      // Older or manually created Seal subscriptions may not carry the phone
+      // item property. In that case, fall back to the matching Shopify customer.
+      if (!parentMobile && parentEmail) {
+        const normalizedEmail = String(parentEmail).trim().toLowerCase();
+        try {
+          if (!shopifyPhoneByEmail.has(normalizedEmail)) {
+            shopifyPhoneByEmail.set(normalizedEmail, await getShopifyCustomerPhoneByEmail(normalizedEmail));
+          }
+          parentMobile = shopifyPhoneByEmail.get(normalizedEmail) || '';
+          if (parentMobile) shopifyPhoneFallbackCount++;
+        } catch (phoneLookupErr) {
+          shopifyPhoneLookupFailureCount++;
+          console.error(`Shopify phone fallback failed for subscription ${sub.id}:`, phoneLookupErr.message || phoneLookupErr);
+        }
+      }
 
       rows.push([
         sub.id,
         item.title,
         participantName,
         parentName,
-        getFirstItemProperty(props, ['Parent Mobile', 'Parent Phone', 'Phone']),
-        getItemProperty(props, 'Parent Email') || reportSubscription.email || sub.email || '',
+        parentMobile,
+        parentEmail,
         getFirstItemProperty(props, ['Program Level', 'Program']) || item.title || '',
         getFirstItemProperty(props, ['Child DOB', 'Participant DOB', 'Date of Birth', 'DOB']),
         getFirstItemProperty(props, ['Child CricClub ID', 'CricClub ID', 'CricClubID']),
@@ -1097,6 +1155,8 @@ app.get('/admin/seal-report', async (req, res) => {
       active_subscriptions: allSubscriptions.length,
       exported_rows: rows.length,
       detail_fallbacks: detailFallbackCount,
+      shopify_phone_fallbacks: shopifyPhoneFallbackCount,
+      shopify_phone_lookup_failures: shopifyPhoneLookupFailureCount,
       subscriptions_without_items: missingItemCount,
       subscriptions_with_only_one_time_items: oneTimeOnlyCount
     });
