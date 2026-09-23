@@ -3306,18 +3306,12 @@ const formatBatchLabel = (batch = {}) =>
     [batch.day, [batch.time, batch.end_time].filter(Boolean).join('-')].filter(Boolean).join(' ')
   ].filter(Boolean).join(' | ');
 
-const coachingFeeOptionsByProgramLevel = {
-  Beginner: [
-    { label: 'Quarterly', amount: 450 },
-    { label: 'Semi-Annual', amount: 900 },
-    { label: 'Annual', amount: 1700 }
-  ],
-  Intermediate: [
-    { label: 'Quarterly', amount: 575 },
-    { label: 'Semi-Annual', amount: 1150 },
-    { label: 'Annual', amount: 2200 }
-  ]
-};
+const coachingFeeOptions = [
+  { label: 'Monthly', amount: 215 },
+  { label: 'Quarterly', amount: 600 },
+  { label: 'Semi-Annual', amount: 1150 },
+  { label: 'Annual', amount: 2200 }
+];
 
 const formatCurrency = (amount) =>
   `$${Number(amount || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -3382,7 +3376,7 @@ async function getTrialSessionWithRecommendedBatches(trialSessionId) {
 function buildParentBatchOfferEmail(req, trialSession) {
   const participantName = `${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim() || 'your child';
   const programLevel = normalizeRecommendedProgramLevel(trialSession.recommended_program_level || '') || 'Beginner';
-  const fees = coachingFeeOptionsByProgramLevel[programLevel] || coachingFeeOptionsByProgramLevel.Beginner;
+  const fees = coachingFeeOptions;
   const batches = trialSession.recommended_batches || [];
   const primaryLocation = batches[0]?.location_name || trialSession.trial_location_name || '';
   const guideUrl = `${getRequestBaseUrl(req)}/coaching-enrollment-user-guide/download`;
@@ -3399,6 +3393,7 @@ function buildParentBatchOfferEmail(req, trialSession) {
     <ul>${batchRows}</ul>
     <h3>Fee Options (Auto Pay Available)</h3>
     <ul>${feeRows}</ul>
+    <p>A one-time $50 administration fee is added to the initial payment.</p>
     <h3>Enrollment Process</h3>
     <p><strong>Step 1: Create CricClubs ID</strong><br>
     Please register using this link:<br>
@@ -3427,6 +3422,7 @@ function buildParentBatchOfferEmail(req, trialSession) {
     '',
     'Fee Options (Auto Pay Available)',
     ...fees.map(fee => `${formatCurrency(fee.amount)} - ${fee.label}`),
+    'A one-time $50 administration fee is added to the initial payment.',
     '',
     'Enrollment Process',
     'Step 1: Create CricClubs ID',
