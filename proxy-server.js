@@ -376,6 +376,24 @@ pool.query('CREATE INDEX IF NOT EXISTS idx_waiver_forms_active_registration ON w
   .then(() => console.log('waiver_forms active registration index ready'))
   .catch(err => console.error('Error creating waiver_forms active registration index:', err));
 
+const createCoachingTermsFormsTableSQL = `
+CREATE TABLE IF NOT EXISTS coaching_terms_forms (
+  form_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  terms_text TEXT NOT NULL,
+  is_active_registration BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`;
+pool.query(createCoachingTermsFormsTableSQL)
+  .then(() => console.log('coaching_terms_forms table ready'))
+  .catch(err => console.error('Error creating coaching_terms_forms table:', err));
+
+pool.query('CREATE INDEX IF NOT EXISTS idx_coaching_terms_forms_active ON coaching_terms_forms(is_active_registration, updated_at)')
+  .then(() => console.log('coaching terms active index ready'))
+  .catch(err => console.error('Error creating coaching terms active index:', err));
+
 const createTrialSessionsTableSQL = `
 CREATE TABLE IF NOT EXISTS trial_sessions (
   trial_session_id TEXT PRIMARY KEY,
@@ -3055,6 +3073,29 @@ const COACHING_WAIVER_ITEMS = [
 ];
 const DEFAULT_WAIVER_TEXT = COACHING_WAIVER_ITEMS.join('\n\n');
 
+const DEFAULT_COACHING_TERMS_TITLE = 'Coaching Enrollment Terms and Conditions';
+const DEFAULT_COACHING_TERMS_TEXT = `<ol>
+<li><strong>Year-round program.</strong> Coaching is offered year-round. Families are encouraged, but not required, to commit for at least one quarter.</li>
+<li><strong>Recurring payments.</strong> I authorize recurring charges according to the billing option selected at checkout: $215 monthly, $600 quarterly, $1,150 semi-annually, or $2,200 annually, plus applicable taxes. Charges continue until cancellation is requested and processed under this policy.</li>
+<li><strong>Administration fee.</strong> A one-time, non-refundable $50 administration fee is charged with the first enrollment payment.</li>
+<li><strong>Cancellation.</strong> Customers must submit a cancellation request through the Academy's official contact method at least five calendar days before the next scheduled payment. An Academy administrator will process the request, and cancellation takes effect at the end of the current paid period.</li>
+<li><strong>Late cancellation requests.</strong> If a request is received fewer than five calendar days before the next payment, that payment may still be processed and cancellation will take effect at the end of the newly paid period.</li>
+<li><strong>Processed payments.</strong> Payments already processed are non-refundable and are not prorated, except where required by law or expressly approved by the Academy.</li>
+<li><strong>Participant absences.</strong> No refund or credit is provided for sessions missed because of personal conflicts, travel, short-term illness, or other participant circumstances.</li>
+<li><strong>Extended medical absence.</strong> A participant medically unable to attend for more than three consecutive weeks may request a vacation credit by submitting the Academy's Vacation Credit Request and supporting documentation from a licensed medical provider. Approved credits apply to future coaching fees and are not cash refunds.</li>
+<li><strong>Scheduled holidays.</strong> Fees account for published closures including Thanksgiving, Christmas, New Year's Day, Memorial Day, Independence Day, and Labor Day. No refund or credit is provided for these scheduled closures.</li>
+<li><strong>Academy-canceled sessions.</strong> If the Academy cancels a session outside its published calendar, it will make reasonable efforts to provide a makeup class or may issue an account credit.</li>
+<li><strong>Program changes.</strong> The Academy may reasonably change coaches, groups, locations, schedules, or program placement and will provide notice of material changes when practicable.</li>
+<li><strong>Conduct and safety.</strong> Participants and parents must behave respectfully and follow all facility, supervision, pickup, drop-off, training-area, and emergency procedures. Unsafe, abusive, threatening, discriminatory, or harassing conduct may result in removal or termination of enrollment.</li>
+<li><strong>Communication.</strong> Scheduling, payments, complaints, program changes, and Academy service requests must use official Academy channels. Nothing in these terms restricts a customer's right to provide an honest review or contact an appropriate authority.</li>
+<li><strong>Failed payments.</strong> A declined, revoked, expired, disputed, or unsuccessful payment is not a cancellation request and does not create eligibility for a vacation or medical credit. The account becomes past due and participation may be suspended until payment is resolved or enrollment is formally canceled.</li>
+<li><strong>Payment update and manual processing.</strong> The customer has five calendar days after notice of a failed payment to update the payment method and resolve the balance. If the payment is not resolved and Academy staff must manually contact the customer, review the account, issue an invoice, or restore enrollment, a one-time $25 failed-payment administration fee may be added for that failed billing cycle. It will not apply when the failure resulted from an Academy, Shopify, Seal, or payment-processing error and may be waived in documented exceptional circumstances.</li>
+<li><strong>Reactivation.</strong> Before participation resumes, the customer must provide a valid payment method, pay legitimately outstanding coaching charges and any applicable disclosed administration fee, and receive confirmation from an Academy administrator.</li>
+<li><strong>Medical information.</strong> Parents must provide accurate emergency-contact and relevant medical information, keep it current, and promptly report injuries or suspected concussions. The Academy may remove a participant from activity when reasonably necessary for safety.</li>
+<li><strong>Volunteering.</strong> Volunteer assistance is welcomed but optional and is not a condition of enrollment.</li>
+<li><strong>Separate agreements.</strong> I confirm that I have separately reviewed and accepted the current Liability Waiver. Media consent, when requested, is a separate choice and declining it will not affect enrollment.</li>
+</ol>`;
+
 const decodeHtmlEntities = (value = '') =>
   String(value || '')
     .replace(/&nbsp;/g, ' ')
@@ -3231,6 +3272,33 @@ const getDefaultWaiverForm = (placement) => ({
   waiver_items: COACHING_WAIVER_ITEMS,
   is_active_standalone: placement === 'standalone',
   is_active_registration: placement === 'registration'
+});
+
+const serializeCoachingTermsForm = (row = {}) => ({
+  form_id: row.form_id,
+  title: row.title,
+  terms_text: row.terms_text,
+  is_active_registration: Boolean(row.is_active_registration),
+  created_at: row.created_at,
+  updated_at: row.updated_at
+});
+
+async function getActiveCoachingTermsForm() {
+  const { rows } = await pool.query(
+    `SELECT form_id, title, terms_text, is_active_registration, created_at, updated_at
+     FROM coaching_terms_forms
+     WHERE is_active_registration = true
+     ORDER BY updated_at DESC
+     LIMIT 1`
+  );
+  return rows[0] ? serializeCoachingTermsForm(rows[0]) : null;
+}
+
+const getDefaultCoachingTermsForm = () => ({
+  form_id: '',
+  title: DEFAULT_COACHING_TERMS_TITLE,
+  terms_text: DEFAULT_COACHING_TERMS_TEXT,
+  is_active_registration: true
 });
 
 async function getShopifyCustomerEmailsByTag(tag) {
@@ -4222,6 +4290,92 @@ app.get('/registration-waiver-form/active', async (req, res) => {
   } catch (err) {
     console.error('Error loading active registration waiver form:', err);
     return res.status(500).json({ success: false, error: 'Unable to load waiver form.' });
+  }
+});
+
+app.get('/registration-terms/active', async (req, res) => {
+  try {
+    const form = await getActiveCoachingTermsForm();
+    return res.json({ success: true, form: form || getDefaultCoachingTermsForm() });
+  } catch (err) {
+    console.error('Error loading active coaching terms:', err);
+    return res.status(500).json({ success: false, error: 'Unable to load coaching terms.' });
+  }
+});
+
+app.get('/admin/coaching-terms', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT form_id, title, terms_text, is_active_registration, created_at, updated_at
+       FROM coaching_terms_forms
+       ORDER BY is_active_registration DESC, updated_at DESC, created_at DESC`
+    );
+    return res.json({ success: true, forms: rows.map(serializeCoachingTermsForm) });
+  } catch (err) {
+    console.error('Error listing coaching terms:', err);
+    return res.status(500).json({ success: false, error: 'Unable to list coaching terms.' });
+  }
+});
+
+app.post('/admin/coaching-terms', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+  const title = String(req.body?.title || '').trim();
+  const termsText = String(req.body?.terms_text || '').trim();
+  const isActive = parseBoolean(req.body?.is_active_registration);
+  if (!title || !termsText) return res.status(400).json({ success: false, error: 'Title and terms text are required.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (isActive) await client.query('UPDATE coaching_terms_forms SET is_active_registration = false, updated_at = NOW() WHERE is_active_registration = true');
+    const { rows } = await client.query(
+      `INSERT INTO coaching_terms_forms (form_id, title, terms_text, is_active_registration)
+       VALUES ($1, $2, $3, $4)
+       RETURNING form_id, title, terms_text, is_active_registration, created_at, updated_at`,
+      [crypto.randomUUID(), title, termsText, isActive]
+    );
+    await client.query('COMMIT');
+    return res.json({ success: true, form: serializeCoachingTermsForm(rows[0]) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error creating coaching terms:', err);
+    return res.status(500).json({ success: false, error: 'Unable to create coaching terms.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.put('/admin/coaching-terms/:formId', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+  const title = String(req.body?.title || '').trim();
+  const termsText = String(req.body?.terms_text || '').trim();
+  const isActive = parseBoolean(req.body?.is_active_registration);
+  if (!title || !termsText) return res.status(400).json({ success: false, error: 'Title and terms text are required.' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (isActive) await client.query('UPDATE coaching_terms_forms SET is_active_registration = false, updated_at = NOW() WHERE form_id <> $1', [req.params.formId]);
+    const { rows } = await client.query(
+      `UPDATE coaching_terms_forms
+       SET title = $2, terms_text = $3, is_active_registration = $4, updated_at = NOW()
+       WHERE form_id = $1
+       RETURNING form_id, title, terms_text, is_active_registration, created_at, updated_at`,
+      [req.params.formId, title, termsText, isActive]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Coaching terms form not found.' });
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, form: serializeCoachingTermsForm(rows[0]) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating coaching terms:', err);
+    return res.status(500).json({ success: false, error: 'Unable to update coaching terms.' });
+  } finally {
+    client.release();
   }
 });
 
