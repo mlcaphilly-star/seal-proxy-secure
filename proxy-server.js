@@ -3076,8 +3076,7 @@ const DEFAULT_WAIVER_TEXT = COACHING_WAIVER_ITEMS.join('\n\n');
 const DEFAULT_COACHING_TERMS_TITLE = 'Coaching Enrollment Terms and Conditions';
 const DEFAULT_COACHING_TERMS_TEXT = `<ol>
 <li><strong>Year-round program.</strong> Coaching is offered year-round. Families are encouraged, but not required, to commit for at least one quarter.</li>
-<li><strong>Recurring payments.</strong> I authorize recurring charges according to the billing option selected at checkout: $215 monthly, $600 quarterly, $1,150 semi-annually, or $2,200 annually, plus applicable taxes. Charges continue until cancellation is requested and processed under this policy.</li>
-<li><strong>Administration fee.</strong> A one-time, non-refundable $50 administration fee is charged with the first enrollment payment.</li>
+<li><strong>Recurring payments.</strong> I authorize recurring charges according to the participant's program level and billing option selected at checkout, plus applicable taxes. Charges continue until cancellation is requested and processed under this policy.</li>
 <li><strong>Cancellation.</strong> Customers must submit a cancellation request through the Academy's official contact method at least five calendar days before the next scheduled payment. An Academy administrator will process the request, and cancellation takes effect at the end of the current paid period.</li>
 <li><strong>Late cancellation requests.</strong> If a request is received fewer than five calendar days before the next payment, that payment may still be processed and cancellation will take effect at the end of the newly paid period.</li>
 <li><strong>Processed payments.</strong> Payments already processed are non-refundable and are not prorated, except where required by law or expressly approved by the Academy.</li>
@@ -3374,12 +3373,10 @@ const formatBatchLabel = (batch = {}) =>
     [batch.day, [batch.time, batch.end_time].filter(Boolean).join('-')].filter(Boolean).join(' ')
   ].filter(Boolean).join(' | ');
 
-const coachingFeeOptions = [
-  { label: 'Monthly', amount: 215 },
-  { label: 'Quarterly', amount: 600 },
-  { label: 'Semi-Annual', amount: 1150 },
-  { label: 'Annual', amount: 2200 }
-];
+const coachingFeeOptionsByProgramLevel = {
+  Beginner: [{label:'Quarterly',amount:475},{label:'Semi-Annual',amount:950},{label:'Annual',amount:1800}],
+  Intermediate: [{label:'Quarterly',amount:600},{label:'Semi-Annual',amount:1150},{label:'Annual',amount:2200}]
+};
 
 const formatCurrency = (amount) =>
   `$${Number(amount || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
@@ -3444,7 +3441,7 @@ async function getTrialSessionWithRecommendedBatches(trialSessionId) {
 function buildParentBatchOfferEmail(req, trialSession) {
   const participantName = `${trialSession.participant_first_name || ''} ${trialSession.participant_last_name || ''}`.trim() || 'your child';
   const programLevel = normalizeRecommendedProgramLevel(trialSession.recommended_program_level || '') || 'Beginner';
-  const fees = coachingFeeOptions;
+  const fees = coachingFeeOptionsByProgramLevel[programLevel] || coachingFeeOptionsByProgramLevel.Beginner;
   const batches = trialSession.recommended_batches || [];
   const primaryLocation = batches[0]?.location_name || trialSession.trial_location_name || '';
   const guideUrl = `${getRequestBaseUrl(req)}/coaching-enrollment-user-guide/download`;
@@ -3461,7 +3458,6 @@ function buildParentBatchOfferEmail(req, trialSession) {
     <ul>${batchRows}</ul>
     <h3>Fee Options (Auto Pay Available)</h3>
     <ul>${feeRows}</ul>
-    <p>A one-time $50 administration fee is added to the initial payment.</p>
     <h3>Enrollment Process</h3>
     <p><strong>Step 1: Create CricClubs ID</strong><br>
     Please register using this link:<br>
@@ -3490,7 +3486,6 @@ function buildParentBatchOfferEmail(req, trialSession) {
     '',
     'Fee Options (Auto Pay Available)',
     ...fees.map(fee => `${formatCurrency(fee.amount)} - ${fee.label}`),
-    'A one-time $50 administration fee is added to the initial payment.',
     '',
     'Enrollment Process',
     'Step 1: Create CricClubs ID',

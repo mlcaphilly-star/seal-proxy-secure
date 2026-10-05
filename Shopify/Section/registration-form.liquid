@@ -7,6 +7,7 @@
 <section class="registration-form py-8">
   <div class="page-width max-w-3xl mx-auto">
     <h1 class="h2 text-center mb-6">Coaching Program Registration</h1>
+    <p class="registration-intro">Complete the form below to enroll in our year-round coaching program at Warminster or Downingtown.</p>
 
     <form id="coachRegForm" class="space-y-6" novalidate>
       <!-- ========== GUARDIAN INFO ========== -->
@@ -210,9 +211,9 @@
       <!-- ========== TERMS ========== -->
       <hr style="margin:2rem 0;border-color:#ccc;">
       <fieldset style="border:none;padding:0;">
-        <legend class="h3 mb-4">Terms of Service</legend>
+        <legend class="h3 mb-4" id="registrationTermsTitle">Terms of Service</legend>
         <div style="border:1px solid #e5e5e5;border-radius:0.375rem;padding:1rem;max-width:800px;max-height:260px;overflow-y:auto;font-size:0.875rem;line-height:1.35;">
-          <ol style="list-style: decimal inside; padding-left: 1.25rem; margin: 0;">
+          <div id="registrationTermsText">
             <li>I understand the coaching is year‑round and we are committed to one quarter to start with coaching.</li>
             <li>If participants fail to attend any session, no reimbursement / credit will be given.</li>
             <li>
@@ -228,7 +229,7 @@
             <li>I will make payments for coaching fees as scheduled...</li>
             <li>I will offer my help as a volunteer...</li>
             <li>I have signed the Liability Waiver and Media Consent Form for MLCAP and StarSportsUS.</li>
-          </ol>
+          </div>
         </div>
         <label style="display:flex;align-items:flex-start;gap:0.5rem;max-width:800px;margin-top:0.75rem;">
           <input required type="checkbox" id="tos" style="margin-top:0.3rem;width:1rem;height:1rem;">
@@ -241,8 +242,8 @@
         <fieldset style="border:none;padding:0;">
           <legend class="h3 mb-4">Liability Waiver</legend>
           <div style="border:1px solid #e5e5e5;border-radius:0.375rem;padding:1rem;max-width:800px;max-height:320px;overflow-y:auto;font-size:0.9rem;line-height:1.45;">
-            <p><strong>StarSportsUS LLC Indoor Sports Facility / Major League Cricket Academy Philadelphia</strong></p>
-            <ol class="waiver-list">
+            <p><strong id="registrationWaiverTitle">StarSportsUS LLC Indoor Sports Facility / Major League Cricket Academy Philadelphia</strong></p>
+            <ol class="waiver-list" id="registrationWaiverTextList">
               <li>This form is valid for a minimum of six months from the date of signing.</li>
               <li>I the undersigned Participant / Parent or Guardian of the Participant recognize and acknowledge that activities at the Starsportsus LLC indoor sports facility / Major League Cricket Academy Philadelphia, could involve serious risk of injury or possibly accidental death.</li>
               <li>I understand that there may be unforeseeable risks and such risks shall be assumed and are understood by the undersigned.</li>
@@ -287,6 +288,10 @@
   </div>
 </section>
 
+<style>
+  .registration-form{--navy:#071b34;--orange:#f58220;background:#f5f2ec;padding:70px 20px!important}.registration-form>.page-width{max-width:1020px!important;padding:0!important}.registration-form h1{margin:0!important;padding:45px 35px 12px;background:linear-gradient(125deg,#071b34,#0d3a6d);color:#fff!important;font-size:clamp(36px,5vw,56px)!important;letter-spacing:-.03em;text-transform:none!important}.registration-intro{margin:0 0 25px;padding:0 35px 40px;background:linear-gradient(125deg,#071b34,#0d3a6d);color:#dbe6f2!important;font-size:17px;line-height:1.65}.registration-form form{padding:38px;background:#fff;box-shadow:0 15px 45px rgba(7,27,52,.1)}.registration-form legend{color:var(--navy);font-size:22px!important;text-transform:none!important}.registration-form label{display:block;margin-bottom:7px;color:#2a3d53;font-weight:700}.registration-form input,.registration-form select,.registration-form textarea{min-height:48px;padding:10px 12px;border:1px solid #cbd3dc;border-radius:3px;background:#fff}.registration-form input:focus,.registration-form select:focus,.registration-form textarea:focus{border-color:var(--orange);outline:2px solid rgba(245,130,32,.18)}.registration-form hr{border:0!important;border-top:1px solid #e1e5ea!important}.registration-form button[type="submit"]{min-height:52px;padding:0 30px;border:0;background:var(--orange);color:#fff;font-weight:800;text-transform:uppercase}.registration-form button[type="submit"]:hover{background:#d96b0a}@media(max-width:700px){.registration-form{padding:35px 12px!important}.registration-form h1{padding:34px 22px 10px}.registration-intro{padding:0 22px 30px}.registration-form form{padding:24px 18px}.registration-form form [style*="display:flex"]{flex-direction:column}.registration-form form [style*="grid-template-columns"]{grid-template-columns:1fr!important}}
+</style>
+
 <script>
 (() => {
   const form       = document.getElementById('coachRegForm');
@@ -309,6 +314,81 @@
   let signatureDrawing = false;
   let trialSessions = [];
   let recommendedBatches = [];
+  let activeWaiverForm = {
+    form_id: '',
+    title: document.getElementById('registrationWaiverTitle').textContent.trim(),
+    waiver_items: [...document.querySelectorAll('#registrationWaiverTextList li')].map(item => item.textContent.trim()).filter(Boolean),
+    waiver_text: [...document.querySelectorAll('#registrationWaiverTextList li')].map(item => item.textContent.trim()).filter(Boolean).join('\n\n')
+  };
+  let activeTermsForm = { form_id: '', title: 'Terms of Service', terms_text: '' };
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+  }
+
+  function renderActiveWaiverForm(waiverForm) {
+    if (!waiverForm) return;
+    const formattedHtml = sanitizeWaiverHtml(waiverForm.waiver_text || '');
+    activeWaiverForm = {
+      form_id: waiverForm.form_id || '',
+      title: waiverForm.title || activeWaiverForm.title,
+      waiver_text: waiverForm.waiver_text || activeWaiverForm.waiver_text,
+      waiver_items: Array.isArray(waiverForm.waiver_items) && waiverForm.waiver_items.length
+        ? waiverForm.waiver_items
+        : String(waiverForm.waiver_text || activeWaiverForm.waiver_text).split(/\n\s*\n|\r?\n/).map(item => item.replace(/^\s*\d+[\).]\s*/, '').trim()).filter(Boolean)
+    };
+    document.getElementById('registrationWaiverTitle').textContent = activeWaiverForm.title;
+    document.getElementById('registrationWaiverTextList').innerHTML = formattedHtml
+      ? `<li class="formatted-waiver-text">${formattedHtml}</li>`
+      : activeWaiverForm.waiver_items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+  }
+
+  function sanitizeWaiverHtml(value) {
+    if (!/<\s*[a-z][\s\S]*>/i.test(String(value || ''))) return '';
+    const template = document.createElement('template');
+    template.innerHTML = String(value || '');
+    template.content.querySelectorAll('script,style,iframe,object,embed,form,input,button').forEach(node => node.remove());
+    template.content.querySelectorAll('*').forEach(node => {
+      [...node.attributes].forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) node.removeAttribute(attr.name);
+        if (name === 'href' && /^javascript:/i.test(attr.value || '')) node.removeAttribute(attr.name);
+      });
+    });
+    return template.innerHTML.trim();
+  }
+
+  async function loadActiveWaiverForm() {
+    try {
+      const response = await fetch(`${proxyBase}/registration-waiver-form/active`);
+      const data = await response.json();
+      if (data.success && data.form) renderActiveWaiverForm(data.form);
+    } catch (err) {
+      console.warn('Unable to load active registration waiver form. Using fallback text.', err);
+    }
+  }
+
+  async function loadActiveTermsForm() {
+    try {
+      const response = await fetch(`${proxyBase}/registration-terms/active`);
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.form) throw new Error(data.error || 'Terms unavailable');
+      activeTermsForm = data.form;
+      document.getElementById('registrationTermsTitle').textContent = activeTermsForm.title || 'Terms of Service';
+      const termsHtml = sanitizeWaiverHtml(activeTermsForm.terms_text || '');
+      document.getElementById('registrationTermsText').innerHTML = termsHtml || escapeHtml(activeTermsForm.terms_text || '').replace(/\n/g, '<br>');
+    } catch (err) {
+      console.error('Unable to load coaching terms.', err);
+      document.getElementById('registrationTermsText').textContent = 'Coaching terms are temporarily unavailable. Please refresh the page.';
+      form.tos.disabled = true;
+    }
+  }
 
   function resizeSignaturePad() {
     const dataUrl = signatureStarted ? signatureCanvas.toDataURL('image/png') : null;
@@ -422,6 +502,11 @@
     }
 
     renderRecommendedBatches(trial.recommended_batch_ids || []);
+    const recommendedLevel = String(trial.recommended_program_level || '').toLowerCase();
+    const programSelect = form[`child_program_${child?.dataset.i || 1}`];
+    if (programSelect && recommendedLevel) {
+      programSelect.value = recommendedLevel === 'intermediate' ? 'coach-intermediate' : 'coach-beginner';
+    }
   }
 
   async function loadTrialSessionsForEmail() {
@@ -477,22 +562,11 @@
   trialSessionSelect.addEventListener('change', () => applyTrialSession(trialSessionSelect.value));
 
   /* =====  YOUR ID MAPS  ===== */
-  const variantId = {
-    'coach-beginner'    : 45227285577899,
-    'coach-intermediate': 45227285610667
-  };
+  const coachingVariantId = {'coach-beginner':45227285577899,'coach-intermediate':45227285610667};
 
   const planId = {
-    'coach-beginner': {
-      'Quarterly'   : 2112946347,
-      'Semi-Annual' : 2112913579,
-      'Annual'      : 2112880811
-    },
-    'coach-intermediate': {
-      'Quarterly'   : 2112848043,
-      'Semi-Annual' : 2112815275,
-      'Annual'      : 2112585899
-    }
+    'coach-beginner': {'Quarterly':3068657835,'Semi-Annual':3068690603,'Annual':3068625067},
+    'coach-intermediate': {'Quarterly':3068592299,'Semi-Annual':3068559531,'Annual':3068526763}
   };
   /* ========================= */
 
@@ -593,15 +667,15 @@
       const prog = form[`child_program_${i}`].value;
       const intv = form[`child_interval_${i}`].value;
 
-      const varId = variantId[prog];
+      const programLevel = prog === 'coach-beginner' ? 'Beginner' : prog === 'coach-intermediate' ? 'Intermediate' : '';
       const spId = planId[prog]?.[intv];
 
-      if (!varId || !spId) {
+      if (!programLevel || !spId) {
         throw new Error(`Invalid program or interval on child #${i}`);
       }
 
       lineItems.push({
-        id: varId,
+        id: coachingVariantId[prog],
         quantity: 1,
         selling_plan: spId,
         properties: {
@@ -611,8 +685,9 @@
           'Child Last Name': form[`child_last_${i}`].value.trim(),
           'Child DOB': form[`child_dob_${i}`].value,
           'Child CricClub ID': form[`child_cricclub_${i}`].value.trim(),
-          'Program Level': prog,
-          'Billing Interval': intv
+          'Program Level': programLevel,
+          'Billing Interval': intv,
+          'Terms Form ID': activeTermsForm.form_id || ''
         }
       });
 
@@ -621,7 +696,7 @@
         last_name: form[`child_last_${i}`].value.trim(),
         dob: form[`child_dob_${i}`].value,
         cricclub_id: form[`child_cricclub_${i}`].value.trim(),
-        program: prog === 'coach-beginner' ? 'Beginner' : 'Intermediate',
+        program: programLevel,
         billing_interval: intv
       });
     }
@@ -640,6 +715,14 @@
         parent_zip: parentProps['Parent Zip'],
         emergency_contact_name: parentProps['Emergency Contact Name'],
         emergency_contact_phone: parentProps['Emergency Contact Phone'],
+        waiver_form_id: activeWaiverForm.form_id,
+        waiver_title: activeWaiverForm.title,
+        waiver_text: activeWaiverForm.waiver_text,
+        waiver_items: activeWaiverForm.waiver_items,
+        terms_form_id: activeTermsForm.form_id,
+        terms_title: activeTermsForm.title,
+        terms_text: activeTermsForm.terms_text,
+        terms_accepted: true,
         children: waiverChildren
       }
     };
@@ -690,7 +773,7 @@
         throw new Error(waiverResult.error || 'Waiver email failed');
       }
 
-      lineItems.forEach(item => {
+      lineItems.filter(item => item.selling_plan).forEach(item => {
         item.properties = {
           ...item.properties,
           'Waiver ID': waiverResult.waiver_id
@@ -713,6 +796,8 @@
       submitRegistrationBtn.textContent = 'Checkout';
     }
   };
+
+  Promise.all([loadActiveWaiverForm(), loadActiveTermsForm()]);
 })();
 </script>
 
@@ -772,5 +857,19 @@
     list-style-type: decimal;
     margin-bottom: 0.6rem;
     padding-left: 0.25rem;
+  }
+
+  .waiver-list .formatted-waiver-text {
+    display: block;
+    list-style: none;
+    margin-left: -2rem;
+  }
+
+  .formatted-waiver-text p,
+  .formatted-waiver-text h2,
+  .formatted-waiver-text h3,
+  .formatted-waiver-text ul,
+  .formatted-waiver-text ol {
+    margin: 0 0 0.75rem;
   }
 </style>
