@@ -563,6 +563,7 @@
 
   /* =====  YOUR ID MAPS  ===== */
   const coachingVariantId = {'coach-beginner':45227285577899,'coach-intermediate':45227285610667};
+  const administrationFeeVariantId = {{ all_products['administration-fee'].selected_or_first_available_variant.id | default: 47923381993643 | json }};
 
   const planId = {
     'coach-beginner': {'Quarterly':3068657835,'Semi-Annual':3068690603,'Annual':3068625067},
@@ -611,6 +612,7 @@
            <option value="coach-beginner">Beginner</option>
            <option value="coach-intermediate">Intermediate</option>
          </select>
+         <small style="display:block;margin-top:0.35rem;">A one-time {{ all_products['administration-fee'].selected_or_first_available_variant.price | money }} administration fee is added at checkout.</small>
        </div>
 
        <!-- Interval -->
@@ -700,6 +702,12 @@
         billing_interval: intv
       });
     }
+
+    lineItems.push({
+      id: administrationFeeVariantId,
+      quantity: 1,
+      properties: { 'Fee Type': 'One-time coaching administration fee' }
+    });
 
     return {
       lineItems,
