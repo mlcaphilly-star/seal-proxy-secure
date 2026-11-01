@@ -3057,19 +3057,19 @@ const getClientIpAddress = (req) => {
   return req.headers['x-real-ip'] || req.ip || req.socket?.remoteAddress || '';
 };
 
-const COACHING_WAIVER_TITLE = 'StarSportsUS LLC Indoor Sports Facility / Major League Cricket Academy Philadelphia';
+const COACHING_WAIVER_TITLE = 'StarSportsUS LLC Indoor Sports Facility / StarSportsUS Cricket Academy';
 const COACHING_WAIVER_ITEMS = [
   'This form is valid for a minimum of six months from the date of signing.',
-  'I the undersigned Participant / Parent or Guardian of the Participant recognize and acknowledge that activities at the Starsportsus LLC indoor sports facility / Major League Cricket Academy Philadelphia, could involve serious risk of injury or possibly accidental death.',
+  'I the undersigned Participant / Parent or Guardian of the Participant recognize and acknowledge that activities at the StarSportsUS LLC indoor sports facility / StarSportsUS Cricket Academy could involve serious risk of injury or possibly accidental death.',
   'I understand that there may be unforeseeable risks and such risks shall be assumed and are understood by the undersigned.',
-  'I authorize the employees, partners or Coaches of Starsportsus LLC / Major League Cricket Academy Philadelphia to call for Emergency Services for myself or my child/children. I authorize attending physician at hospital to administer necessary emergency medical care and I accept the responsibility for payment of any and all treatment provided therein including emergency rescue services.',
-  'I hereby waive, release, indemnify, absolve and hold harmless Starsportsus LLC / Major League Cricket Academy Philadelphia, the organizers, sponsors, representatives, partners, coaches, and other participants, for any claim arising out of injury or accidental death to me / my child.',
-  'I assume all risks, liabilities and hazards accidental to participating in an instructional clinic, practice sessions, bowling / pitching machine practice and / or party / function at Starsportsus LLC / Major League Cricket Academy Philadelphia.',
-  'I hereby acknowledge and agree that participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia comes with inherent risks. I have full knowledge and understanding of the inherent risks associated with participation, including but in no way limited to: (1) slips, trips, and falls, (2) athletic injuries, and (3) illness, including exposure to and infection with viruses or bacteria.',
+  'I authorize the employees, partners or coaches of StarSportsUS LLC / StarSportsUS Cricket Academy to call for Emergency Services for myself or my child/children. I authorize an attending physician at a hospital to administer necessary emergency medical care, and I accept responsibility for payment of any and all treatment provided, including emergency rescue services.',
+  'I hereby waive, release, indemnify, absolve and hold harmless StarSportsUS LLC / StarSportsUS Cricket Academy, the organizers, sponsors, representatives, partners, coaches, and other participants, for any claim arising out of injury or accidental death to me / my child.',
+  'I assume all risks, liabilities and hazards incidental to participating in an instructional clinic, practice session, bowling / pitching machine practice and / or party / function at StarSportsUS LLC / StarSportsUS Cricket Academy.',
+  'I hereby acknowledge and agree that participation in any activity at StarSportsUS Cricket Academy comes with inherent risks. I have full knowledge and understanding of the inherent risks associated with participation, including but in no way limited to: (1) slips, trips, and falls, (2) athletic injuries, and (3) illness, including exposure to and infection with viruses or bacteria.',
   'I further acknowledge that the preceding list is not inclusive of all possible risks associated with participation and that said list in no way limits the operation of this Agreement.',
-  'Coronavirus / COVID-19 Warning & Disclaimer - Coronavirus, COVID-19 and its variant is an extremely contagious virus that spreads easily through person-to-person contact. Federal and state authorities recommend social distancing as a mean to prevent the spread of the virus. COVID-19 / its variant can lead to severe illness, personal injury, permanent disability, and death. Participating in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or accessing StarSportsUS / Major League Cricket Academy Philadelphia facilities could increase the risk of contracting COVID-19 / its variant. StarSportsUS / Major League Cricket Academy Philadelphia in no way warrants that COVID-19 / COVID-19 Variant infection will not occur through participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia.',
-  'I further certify that I am in good health and that I have no conditions or impairments which would preclude my safe participation in any activity at StarSportsUS / Major League Cricket Academy Philadelphia or service. I hereby certify that I have read the StarSportsUS / Major League Cricket Academy Philadelphia policies and procedures related to the transmission of COVID-19 / its variant and agree to follow these as written.',
-  'I will produce proof of Vaccination if asked by any StarSportsUS or Major League Academy Philadelphia officials.'
+  'Coronavirus / COVID-19 Warning & Disclaimer - Coronavirus, COVID-19 and its variants are extremely contagious and spread easily through person-to-person contact. Participating in any activity at StarSportsUS Cricket Academy or accessing its facilities could increase the risk of infection. StarSportsUS Cricket Academy in no way warrants that infection will not occur through participation in any activity at the Academy.',
+  'I further certify that I am in good health and have no conditions or impairments that would preclude my safe participation in any activity or service at StarSportsUS Cricket Academy. I agree to follow the StarSportsUS Cricket Academy health and safety policies as written.',
+  'I will produce proof of vaccination if asked by an authorized StarSportsUS Cricket Academy official.'
 ];
 const DEFAULT_WAIVER_TEXT = COACHING_WAIVER_ITEMS.join('\n\n');
 
@@ -3238,16 +3238,27 @@ const getSignatureImageBuffer = (signatureDataUrl = '') => {
   return Buffer.from(match[2], 'base64');
 };
 
-const serializeWaiverForm = (row = {}) => ({
-  form_id: row.form_id,
-  title: row.title,
-  waiver_text: row.waiver_text,
-  waiver_items: normalizeWaiverTextItems(row.waiver_text),
-  is_active_standalone: Boolean(row.is_active_standalone),
-  is_active_registration: Boolean(row.is_active_registration),
-  created_at: row.created_at,
-  updated_at: row.updated_at
-});
+const replaceLegacyAcademyName = (value = '') => String(value || '')
+  .replace(/StarSportsUS\s*\/\s*Major League Cricket Academy Philadelphia/gi, 'StarSportsUS Cricket Academy')
+  .replace(/Major League Cricket Academy Philadelphia/gi, 'StarSportsUS Cricket Academy')
+  .replace(/Major League Academy Philadelphia/gi, 'StarSportsUS Cricket Academy')
+  .replace(/MLC Academy Philadelphia/gi, 'StarSportsUS Cricket Academy')
+  .replace(/\bMLCAP\b/gi, 'StarSportsUS Cricket Academy');
+
+const serializeWaiverForm = (row = {}) => {
+  const title = replaceLegacyAcademyName(row.title);
+  const waiverText = replaceLegacyAcademyName(row.waiver_text);
+  return {
+    form_id: row.form_id,
+    title,
+    waiver_text: waiverText,
+    waiver_items: normalizeWaiverTextItems(waiverText),
+    is_active_standalone: Boolean(row.is_active_standalone),
+    is_active_registration: Boolean(row.is_active_registration),
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+};
 
 async function getActiveWaiverFormByPlacement(placement) {
   const column = placement === 'registration' ? 'is_active_registration' : 'is_active_standalone';
