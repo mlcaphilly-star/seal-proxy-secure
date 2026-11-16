@@ -11,13 +11,34 @@
   <h1 style="margin-bottom:1rem;">Admin Tools</h1>
 
   <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+    <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Holiday Schedule</h2>
+    <p style="margin-top:0;">Add closure periods used to exclude holidays from vacation credit calculations.</p>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:0.5rem;align-items:end;">
+      <div>
+        <label for="holidayName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Holiday Name</label>
+        <input id="holidayName" type="text" placeholder="Thanksgiving 2026" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+      </div>
+      <div>
+        <label for="holidayFrom" style="display:block;font-weight:600;margin-bottom:0.35rem;">From Date</label>
+        <input id="holidayFrom" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+      </div>
+      <div>
+        <label for="holidayTo" style="display:block;font-weight:600;margin-bottom:0.35rem;">To Date</label>
+        <input id="holidayTo" type="date" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
+      </div>
+      <button id="addHoliday" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Add Holiday</button>
+    </div>
+    <div id="holidayList" style="margin-top:1rem;overflow-x:auto;"></div>
+  </div>
+
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-bottom:1rem;">
     <label for="adminKey" style="display:block;font-weight:600;margin-bottom:0.35rem;">Admin Key</label>
     <input id="adminKey" type="password" autocomplete="off" style="width:100%;max-width:420px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
     <button id="saveAdminKey" type="button" style="margin-left:0.5rem;padding:0.55rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Use Key</button>
     <span id="keyStatus" style="margin-left:0.75rem;font-weight:600;"></span>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;">
+  <div style="display:flex;flex-direction:column;gap:1rem;">
     <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
       <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Reports</h2>
 
@@ -57,6 +78,180 @@
           </button>
         </div>
       </div>
+      <div id="reportResults" style="margin-top:1rem;overflow-x:auto;"></div>
+    </div>
+
+    <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
+      <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Waiver Dashboard</h2>
+
+      <div style="border-bottom:1px solid #ddd;padding-bottom:1rem;margin-bottom:1rem;">
+        <h3 style="font-size:1rem;margin:0 0 0.75rem;">Search Waivers</h3>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:0.5rem;align-items:end;">
+          <label for="waiverSearch" style="display:block;font-weight:600;">
+            Search by signer, participant, email, order, or waiver ID
+            <input id="waiverSearch" type="search" placeholder="Waiver Search..." style="display:block;width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-top:0.35rem;">
+          </label>
+          <button id="searchWaivers" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#f58220;color:#fff;">
+            Search
+          </button>
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.75rem;">
+          <label for="waiverStatusFilter" style="font-weight:600;">Status</label>
+          <select id="waiverStatusFilter" style="padding:0.5rem;border:1px solid #bbb;border-radius:4px;">
+            <option value="">All</option>
+            <option value="submitted">Submitted</option>
+            <option value="pending_checkout">Pending Checkout</option>
+            <option value="paid">Paid</option>
+          </select>
+          <button id="loadRecentWaivers" type="button" style="padding:0.55rem 0.8rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">
+            Load Recent
+          </button>
+        </div>
+        <div id="waiverSearchResults" style="margin-top:1rem;overflow-x:auto;"></div>
+      </div>
+
+      <div>
+        <h3 style="font-size:1rem;margin:0 0 0.75rem;">Waiver Forms</h3>
+        <input id="waiverFormId" type="hidden">
+        <label for="waiverFormTitleInput" style="display:block;font-weight:600;margin-bottom:0.35rem;">Form Title</label>
+        <input id="waiverFormTitleInput" type="text" placeholder="Medical & Legal Liability Waiver" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+        <div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
+          <label for="waiverRichEditor" style="display:block;font-weight:600;">Enter your Agreement Text</label>
+          <label style="display:flex;align-items:center;gap:0.35rem;font-weight:600;">
+            <input id="waiverEditorAdvanced" type="checkbox">
+            <span>Show advanced editor tools</span>
+          </label>
+        </div>
+        <div class="waiver-editor-shell" style="border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;background:#fff;">
+          <div class="waiver-editor-toolbar" style="display:flex;gap:0.25rem;flex-wrap:wrap;align-items:center;padding:0.35rem;border-bottom:1px solid #ccc;background:#eee;">
+            <button type="button" data-waiver-command="undo" title="Undo">Undo</button>
+            <button type="button" data-waiver-command="redo" title="Redo">Redo</button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-waiver-command="bold" title="Bold"><strong>B</strong></button>
+            <button type="button" data-waiver-command="italic" title="Italic"><em>I</em></button>
+            <button type="button" data-waiver-command="underline" title="Underline"><u>U</u></button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-waiver-command="justifyLeft" title="Align left">Left</button>
+            <button type="button" data-waiver-command="justifyCenter" title="Align center">Center</button>
+            <button type="button" data-waiver-command="justifyRight" title="Align right">Right</button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-waiver-command="insertUnorderedList" title="Bullet list">Bullets</button>
+            <button type="button" data-waiver-command="insertOrderedList" title="Numbered list">Numbers</button>
+            <button type="button" data-waiver-command="outdent" title="Decrease indent">Outdent</button>
+            <button type="button" data-waiver-command="indent" title="Increase indent">Indent</button>
+            <span class="waiver-editor-advanced-tools" style="display:none;gap:0.25rem;flex-wrap:wrap;align-items:center;">
+              <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+              <button type="button" data-waiver-command="createLink" title="Insert link">Link</button>
+              <button type="button" data-waiver-command="removeFormat" title="Remove formatting">Clear Format</button>
+              <select id="waiverFormatBlock" title="Text style" style="min-height:32px;border:1px solid #bbb;background:#fff;">
+                <option value="p">Paragraph</option>
+                <option value="h2">Heading 2</option>
+                <option value="h3">Heading 3</option>
+              </select>
+              <select id="waiverMergeTag" title="Insert waiver field" style="min-height:32px;border:1px solid #bbb;background:#fff;">
+                <option value="">Waiver Tools</option>
+                <option value="{% raw %}{{FIRST_NAME}}{% endraw %}">{% raw %}{{FIRST_NAME}}{% endraw %}</option>
+                <option value="{% raw %}{{LAST_NAME}}{% endraw %}">{% raw %}{{LAST_NAME}}{% endraw %}</option>
+                <option value="{% raw %}{{PARTICIPANT_NAME}}{% endraw %}">{% raw %}{{PARTICIPANT_NAME}}{% endraw %}</option>
+                <option value="{% raw %}{{SIGNATURE_DATE}}{% endraw %}">{% raw %}{{SIGNATURE_DATE}}{% endraw %}</option>
+              </select>
+              <button type="button" id="toggleWaiverSource">HTML Source</button>
+            </span>
+          </div>
+          <div id="waiverRichEditor" contenteditable="true" style="min-height:320px;max-height:560px;overflow:auto;padding:0.75rem;line-height:1.55;outline:none;"></div>
+          <textarea id="waiverFormTextInput" rows="10" style="display:none;width:100%;padding:0.55rem;border:0;border-top:1px solid #ccc;"></textarea>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.75rem;">
+          <input id="waiverFormActiveStandalone" type="checkbox">
+          <span>Active on standalone Shopify waiver form</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.75rem;">
+          <input id="waiverFormActiveRegistration" type="checkbox">
+          <span>Active on coaching registration form</span>
+        </label>
+
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button id="loadLiabilityWaiverTemplate" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#6b7280;color:#fff;">
+            Load Liability Waiver Template
+          </button>
+          <button id="saveWaiverForm" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
+            Create New Waiver Form
+          </button>
+          <button id="clearWaiverForm" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">
+            Clear
+          </button>
+          <button id="loadWaiverForms" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">
+            Load Waiver Forms
+          </button>
+        </div>
+
+        <div id="waiverFormsResults" style="margin-top:1rem;overflow-x:auto;"></div>
+      </div>
+
+      <div style="border-top:1px solid #ddd;margin-top:1.25rem;padding-top:1.25rem;">
+        <h3 style="font-size:1.1rem;margin:0 0 0.5rem;">Coaching Registration Terms</h3>
+        <p style="margin:0 0 0.9rem;color:#555;">Manage the Terms of Service shown on the coaching registration form. Saving a form as active replaces the wording shown to new registrants.</p>
+
+        <input id="termsFormId" type="hidden">
+        <label for="termsFormTitleInput" style="display:block;font-weight:600;margin-bottom:0.35rem;">Terms Title</label>
+        <input id="termsFormTitleInput" type="text" placeholder="Coaching Enrollment Terms and Conditions" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+        <div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;margin-bottom:0.35rem;">
+          <label for="termsRichEditor" style="display:block;font-weight:600;">Enter your Terms Wording</label>
+          <label style="display:flex;align-items:center;gap:0.35rem;font-weight:600;">
+            <input id="termsEditorAdvanced" type="checkbox">
+            <span>Show advanced editor tools</span>
+          </label>
+        </div>
+        <div class="waiver-editor-shell" style="border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;background:#fff;">
+          <div class="waiver-editor-toolbar" style="display:flex;gap:0.25rem;flex-wrap:wrap;align-items:center;padding:0.35rem;border-bottom:1px solid #ccc;background:#eee;">
+            <button type="button" data-terms-command="undo" title="Undo">Undo</button>
+            <button type="button" data-terms-command="redo" title="Redo">Redo</button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-terms-command="bold" title="Bold"><strong>B</strong></button>
+            <button type="button" data-terms-command="italic" title="Italic"><em>I</em></button>
+            <button type="button" data-terms-command="underline" title="Underline"><u>U</u></button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-terms-command="justifyLeft" title="Align left">Left</button>
+            <button type="button" data-terms-command="justifyCenter" title="Align center">Center</button>
+            <button type="button" data-terms-command="justifyRight" title="Align right">Right</button>
+            <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+            <button type="button" data-terms-command="insertUnorderedList" title="Bullet list">Bullets</button>
+            <button type="button" data-terms-command="insertOrderedList" title="Numbered list">Numbers</button>
+            <button type="button" data-terms-command="outdent" title="Decrease indent">Outdent</button>
+            <button type="button" data-terms-command="indent" title="Increase indent">Indent</button>
+            <span class="terms-editor-advanced-tools" style="display:none;gap:0.25rem;flex-wrap:wrap;align-items:center;">
+              <span style="width:1px;height:24px;background:#bbb;margin:0 0.25rem;"></span>
+              <button type="button" data-terms-command="createLink" title="Insert link">Link</button>
+              <button type="button" data-terms-command="removeFormat" title="Remove formatting">Clear Format</button>
+              <select id="termsFormatBlock" title="Text style" style="min-height:32px;border:1px solid #bbb;background:#fff;">
+                <option value="p">Paragraph</option>
+                <option value="h2">Heading 2</option>
+                <option value="h3">Heading 3</option>
+              </select>
+              <button type="button" id="toggleTermsSource">HTML Source</button>
+            </span>
+          </div>
+          <div id="termsRichEditor" contenteditable="true" style="min-height:320px;max-height:560px;overflow:auto;padding:0.75rem;line-height:1.55;outline:none;"></div>
+          <textarea id="termsFormTextInput" rows="10" style="display:none;width:100%;padding:0.55rem;border:0;border-top:1px solid #ccc;"></textarea>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.75rem;">
+          <input id="termsFormActiveRegistration" type="checkbox">
+          <span>Active on coaching registration form</span>
+        </label>
+
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button id="loadCoachingTermsTemplate" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#6b7280;color:#fff;">Load Current / Default Terms</button>
+          <button id="saveTermsForm" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">Create New Terms Form</button>
+          <button id="clearTermsForm" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#111;color:#fff;">Clear</button>
+          <button id="loadTermsForms" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#2563eb;color:#fff;">Load Terms Forms</button>
+        </div>
+
+        <div id="termsFormsResults" style="margin-top:1rem;overflow-x:auto;"></div>
+      </div>
     </div>
 
     <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
@@ -93,6 +288,11 @@
           Apply Credit
         </button>
       </div>
+
+      <details id="bulkResultsPanel" class="admin-collapse" style="display:none;margin-top:1rem;border-top:1px solid #ddd;padding-top:0.75rem;" open>
+        <summary style="cursor:pointer;font-weight:600;">Bulk Credit Preview</summary>
+        <div id="bulkResults" style="margin-top:0.75rem;overflow-x:auto;"></div>
+      </details>
     </div>
 
     <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;">
@@ -100,6 +300,7 @@
 
       <div style="border-bottom:1px solid #ddd;padding-bottom:1rem;margin-bottom:1rem;">
         <h3 style="font-size:1rem;margin:0 0 0.75rem;">New Location</h3>
+
         <label for="locationName" style="display:block;font-weight:600;margin-bottom:0.35rem;">Location Name</label>
         <input id="locationName" type="text" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
 
@@ -130,6 +331,11 @@
             <input id="locationCountry" type="text" value="USA" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;">
           </div>
         </div>
+
+        <label style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.75rem;">
+          <input id="locationIndoor" type="checkbox">
+          <span>Indoor Location</span>
+        </label>
 
         <button id="saveLocation" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
           Save Location
@@ -173,6 +379,11 @@
       <label for="batchComments" style="display:block;font-weight:600;margin-bottom:0.35rem;">Comments</label>
       <textarea id="batchComments" rows="3" style="width:100%;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;"></textarea>
 
+      <label style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.75rem;">
+        <input id="batchTrial" type="checkbox">
+        <span>Trial Session Batch</span>
+      </label>
+
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
         <button id="saveBatch" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
           Save Batch
@@ -184,13 +395,51 @@
           Load Batches
         </button>
       </div>
+
+      <details id="batchResultsPanel" class="admin-collapse" style="display:none;margin-top:1rem;border-top:1px solid #ddd;padding-top:0.75rem;" open>
+        <summary style="cursor:pointer;font-weight:600;">Batches</summary>
+        <div id="batchResults" style="margin-top:0.75rem;overflow-x:auto;"></div>
+      </details>
     </div>
   </div>
 
+  <div style="border:1px solid #ddd;border-radius:6px;padding:1rem;margin-top:1rem;">
+    <h2 style="font-size:1.25rem;margin:0 0 0.75rem;">Enrollment Preview</h2>
+
+    <label for="previewCustomerEmail" style="display:block;font-weight:600;margin-bottom:0.35rem;">Customer Email</label>
+    <input id="previewCustomerEmail" type="email" style="width:100%;max-width:520px;padding:0.55rem;border:1px solid #bbb;border-radius:4px;margin-bottom:0.75rem;">
+
+    <button id="loadEnrollmentPreview" type="button" style="padding:0.65rem 0.9rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">
+      Preview Enrollments
+    </button>
+
+    <details id="enrollmentPreviewPanel" class="admin-collapse" style="display:none;margin-top:1rem;border-top:1px solid #ddd;padding-top:0.75rem;" open>
+      <summary style="cursor:pointer;font-weight:600;">Enrollment Preview Result</summary>
+      <div id="enrollmentPreviewResults" style="margin-top:0.75rem;overflow-x:auto;"></div>
+    </details>
+  </div>
+
   <div id="adminStatus" style="margin-top:1rem;font-weight:600;"></div>
-  <div id="bulkResults" style="margin-top:1rem;overflow-x:auto;"></div>
-  <div id="batchResults" style="margin-top:1rem;overflow-x:auto;"></div>
 </section>
+
+<style>
+  .admin-tools details.admin-collapse > summary {
+    list-style: none;
+  }
+
+  .admin-tools details.admin-collapse > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .admin-tools details.admin-collapse > summary::before {
+    content: "+ ";
+    font-weight: 700;
+  }
+
+  .admin-tools details.admin-collapse[open] > summary::before {
+    content: "- ";
+  }
+</style>
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
@@ -207,7 +456,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const creditFromDate = document.getElementById("creditFromDate");
   const creditToDate = document.getElementById("creditToDate");
   const creditDays = document.getElementById("creditDays");
+  const reportResults = document.getElementById("reportResults");
+  const bulkResultsPanel = document.getElementById("bulkResultsPanel");
   const bulkResults = document.getElementById("bulkResults");
+  const batchResultsPanel = document.getElementById("batchResultsPanel");
   const batchResults = document.getElementById("batchResults");
   const locationName = document.getElementById("locationName");
   const locationAddress1 = document.getElementById("locationAddress1");
@@ -216,6 +468,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const locationState = document.getElementById("locationState");
   const locationZip = document.getElementById("locationZip");
   const locationCountry = document.getElementById("locationCountry");
+  const locationIndoor = document.getElementById("locationIndoor");
   const batchId = document.getElementById("batchId");
   const batchLocation = document.getElementById("batchLocation");
   const batchName = document.getElementById("batchName");
@@ -223,7 +476,109 @@ document.addEventListener("DOMContentLoaded", () => {
   const batchTime = document.getElementById("batchTime");
   const batchEndTime = document.getElementById("batchEndTime");
   const batchComments = document.getElementById("batchComments");
+  const batchTrial = document.getElementById("batchTrial");
   const upcomingMonth = document.getElementById("upcomingMonth");
+  const previewCustomerEmail = document.getElementById("previewCustomerEmail");
+  const enrollmentPreviewPanel = document.getElementById("enrollmentPreviewPanel");
+  const enrollmentPreviewResults = document.getElementById("enrollmentPreviewResults");
+  const holidayName = document.getElementById("holidayName");
+  const holidayFrom = document.getElementById("holidayFrom");
+  const holidayTo = document.getElementById("holidayTo");
+  const holidayList = document.getElementById("holidayList");
+  const waiverSearch = document.getElementById("waiverSearch");
+  const waiverStatusFilter = document.getElementById("waiverStatusFilter");
+  const waiverSearchResults = document.getElementById("waiverSearchResults");
+  const waiverFormId = document.getElementById("waiverFormId");
+  const waiverFormTitleInput = document.getElementById("waiverFormTitleInput");
+  const waiverFormTextInput = document.getElementById("waiverFormTextInput");
+  const waiverFormActiveStandalone = document.getElementById("waiverFormActiveStandalone");
+  const waiverFormActiveRegistration = document.getElementById("waiverFormActiveRegistration");
+  const waiverFormsResults = document.getElementById("waiverFormsResults");
+  const waiverRichEditor = document.getElementById("waiverRichEditor");
+  const waiverEditorAdvanced = document.getElementById("waiverEditorAdvanced");
+  const waiverFormatBlock = document.getElementById("waiverFormatBlock");
+  const waiverMergeTag = document.getElementById("waiverMergeTag");
+  const toggleWaiverSource = document.getElementById("toggleWaiverSource");
+  const termsFormId = document.getElementById("termsFormId");
+  const termsFormTitleInput = document.getElementById("termsFormTitleInput");
+  const termsFormTextInput = document.getElementById("termsFormTextInput");
+  const termsFormActiveRegistration = document.getElementById("termsFormActiveRegistration");
+  const termsFormsResults = document.getElementById("termsFormsResults");
+  const termsRichEditor = document.getElementById("termsRichEditor");
+  const termsEditorAdvanced = document.getElementById("termsEditorAdvanced");
+  const termsFormatBlock = document.getElementById("termsFormatBlock");
+  const toggleTermsSource = document.getElementById("toggleTermsSource");
+  let waiverSourceMode = false;
+  let termsSourceMode = false;
+  const liabilityWaiverTemplateTitle = "Participant Waiver, Release of Liability, Assumption of Risk, Medical Authorization & Photo Release";
+  const liabilityWaiverTemplateText = `This Agreement is valid for six (6) months from the date of signing and applies to all activities conducted by StarSportsUS LLC, doing business as Major League Cricket Academy Philadelphia and StarSportsUS Indoor Sports Facility (collectively referred to as the 'Academy').
+
+1. Participant Information
+I am the Participant identified below or the Parent/Legal Guardian of the Participant if the Participant is under eighteen (18) years of age. I acknowledge that participation in cricket coaching, training, practice sessions, leagues, tournaments, camps, clinics, fitness activities, bowling/pitching machine training, birthday parties, private lessons, special events, and any other activities conducted by the Academy involves inherent risks that cannot be eliminated regardless of the level of supervision or care exercised.
+
+2. Assumption of Risk
+I understand and voluntarily accept all known and unknown risks associated with participation in Academy activities, including but not limited to being struck by cricket balls, bats, wickets or equipment; injuries from bowling/pitching machines; slips, trips, falls, collisions; athletic injuries including concussions; equipment malfunction; heat-related illness; and exposure to communicable illnesses. I voluntarily assume all known and unknown risks associated with participation.
+
+3. Medical Authorization
+I authorize the Academy and its representatives to obtain emergency medical treatment if necessary. I accept responsibility for all medical expenses incurred and certify that the Participant is physically capable of participation or has consulted a physician.
+
+4. Release of Liability
+To the fullest extent permitted by Pennsylvania law, I release, waive, discharge, indemnify and hold harmless the Academy, its owners, officers, directors, employees, coaches, volunteers, contractors, sponsors, affiliates, landlords, agents and representatives from claims arising from participation, except those resulting from gross negligence or willful misconduct.
+
+5. Property
+The Academy is not responsible for lost, stolen, or damaged personal property.
+
+6. Equipment and Facility Use
+I understand that use of Academy facilities and equipment carries inherent risks and agree to use all equipment only as instructed.
+
+7. Participant Conduct
+The Participant agrees to follow all Academy rules and coach instructions. The Academy may remove any participant whose conduct is unsafe or disruptive without refund.
+
+8. Insurance
+The Academy does not provide medical or accident insurance. Maintaining insurance is my responsibility.
+
+9. Concussion and Injury Awareness
+I will report suspected concussion or injury immediately and understand the Academy may remove a participant from activity for safety.
+
+10. Photo and Video Release
+I grant permission for the Academy to use photographs, videos, voice, and likeness of the Participant for promotional, educational, website, social media, advertising, and marketing purposes without compensation.
+
+11. Parent/Guardian Representation
+If signing for a minor, I certify I am the parent/legal guardian with authority to sign.
+
+12. Electronic Signature
+Electronic signatures shall have the same legal effect as handwritten signatures.
+
+13. Governing Law
+This Agreement shall be governed by the laws of the Commonwealth of Pennsylvania.
+
+14. Severability
+If any provision is unenforceable, the remaining provisions remain in effect.
+
+15. Entire Agreement
+This Agreement constitutes the entire understanding regarding participation and release of liability.
+
+16. Acknowledgment
+I have carefully read and understand this Agreement, understand I am giving up certain legal rights including the right to sue, and sign voluntarily.
+
+Participant Information
+Participant Name:
+Date of Birth:
+Parent/Guardian Name (if under 18):
+Address:
+City:
+State:
+ZIP:
+Phone:
+Email:
+Emergency Contact:
+Emergency Contact Phone:
+
+Signatures
+Participant Signature (18 or older):
+Parent/Legal Guardian Signature:
+Printed Name:
+Relationship:`;
 
   const savedKey = sessionStorage.getItem("sealAdminKey") || "";
   if (savedKey) {
@@ -243,6 +598,44 @@ document.addEventListener("DOMContentLoaded", () => {
     return true;
   }
 
+  function renderHolidayList(data) {
+    const holidays = data.holidays || [];
+    holidayList.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr style="background:#f3f4f6;">
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Holiday</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">From Date</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">To Date</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Action</th>
+        </tr></thead>
+        <tbody>${holidays.map(holiday => `
+          <tr>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(holiday.name)}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(holiday.from_date)}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(holiday.to_date)}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"><button type="button" class="delete-holiday" data-id="${holiday.id}">Delete</button></td>
+          </tr>`).join("")}</tbody>
+      </table>`;
+
+    holidayList.querySelectorAll(".delete-holiday").forEach(button => {
+      button.addEventListener("click", async () => {
+        if (!confirm("Delete this holiday?")) return;
+        const response = await fetch(buildUrl(`/admin/holidays/${button.dataset.id}`), { method: "DELETE" });
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || "Could not delete holiday.");
+        await loadHolidays();
+      });
+    });
+  }
+
+  async function loadHolidays() {
+    if (!requireKey()) return;
+    const response = await fetch(buildUrl("/admin/holidays"));
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || "Could not load holidays.");
+    renderHolidayList(data);
+  }
+
   function buildUrl(path, params = {}) {
     const url = new URL(proxyBase + path);
     url.searchParams.set("key", getAdminKey());
@@ -250,6 +643,407 @@ document.addEventListener("DOMContentLoaded", () => {
       if (value) url.searchParams.set(key, value);
     }
     return url.toString();
+  }
+
+  function buildPublicUrl(path, params = {}) {
+    const url = new URL(proxyBase + path);
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function textToEditorHtml(value) {
+    return String(value || "")
+      .split(/\n\s*\n/)
+      .map(block => block.trim())
+      .filter(Boolean)
+      .map(block => `<p>${escapeHtml(block).replace(/\n/g, "<br>")}</p>`)
+      .join("");
+  }
+
+  function sanitizeWaiverEditorHtml(value) {
+    const template = document.createElement("template");
+    template.innerHTML = String(value || "");
+    template.content.querySelectorAll("script,style,iframe,object,embed,form,input,button").forEach(node => node.remove());
+    template.content.querySelectorAll("*").forEach(node => {
+      [...node.attributes].forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith("on")) node.removeAttribute(attr.name);
+        if (name === "href" && /^javascript:/i.test(attr.value || "")) node.removeAttribute(attr.name);
+      });
+    });
+    return template.innerHTML.trim();
+  }
+
+  function syncWaiverEditorToSource() {
+    waiverFormTextInput.value = waiverSourceMode
+      ? waiverFormTextInput.value
+      : sanitizeWaiverEditorHtml(waiverRichEditor.innerHTML);
+  }
+
+  function setWaiverEditorHtml(value) {
+    const html = /<\s*[a-z][\s\S]*>/i.test(String(value || ""))
+      ? sanitizeWaiverEditorHtml(value)
+      : textToEditorHtml(value);
+    waiverRichEditor.innerHTML = html || "<p><br></p>";
+    waiverFormTextInput.value = html;
+  }
+
+  function getWaiverEditorHtml() {
+    syncWaiverEditorToSource();
+    return sanitizeWaiverEditorHtml(waiverFormTextInput.value);
+  }
+
+  function execWaiverCommand(command) {
+    waiverRichEditor.focus();
+    if (command === "createLink") {
+      const url = prompt("Enter link URL");
+      if (!url) return;
+      document.execCommand(command, false, url);
+      return;
+    }
+    document.execCommand(command, false, null);
+    syncWaiverEditorToSource();
+  }
+
+  function syncTermsEditorToSource() {
+    termsFormTextInput.value = termsSourceMode
+      ? termsFormTextInput.value
+      : sanitizeWaiverEditorHtml(termsRichEditor.innerHTML);
+  }
+
+  function setTermsEditorHtml(value) {
+    const html = /<\s*[a-z][\s\S]*>/i.test(String(value || ""))
+      ? sanitizeWaiverEditorHtml(value)
+      : textToEditorHtml(value);
+    termsRichEditor.innerHTML = html || "<p><br></p>";
+    termsFormTextInput.value = html;
+  }
+
+  function getTermsEditorHtml() {
+    syncTermsEditorToSource();
+    return sanitizeWaiverEditorHtml(termsFormTextInput.value);
+  }
+
+  function execTermsCommand(command) {
+    termsRichEditor.focus();
+    if (command === "createLink") {
+      const url = prompt("Enter link URL");
+      if (!url) return;
+      document.execCommand(command, false, url);
+    } else {
+      document.execCommand(command, false, null);
+    }
+    syncTermsEditorToSource();
+  }
+
+  function isOutdoorEnrollment(enrollment) {
+    const product = String(enrollment.product_title || enrollment.program || "").toLowerCase();
+    return product.includes("outdoor");
+  }
+
+  function isParticipantNameProduct(enrollment) {
+    const product = String(enrollment.product_title || enrollment.program || "").toLowerCase();
+    return product.includes("outdoor") || product.includes("women");
+  }
+
+  function enrollmentParticipantName(enrollment) {
+    const childName = `${enrollment.child_first_name || ""} ${enrollment.child_last_name || ""}`.trim();
+    return isParticipantNameProduct(enrollment)
+      ? enrollment.participant_name || childName
+      : childName || enrollment.participant_name || "";
+  }
+
+  function assignmentTime(assignment) {
+    if (!assignment) return "";
+    return assignment.end_time ? `${assignment.time || ""}-${assignment.end_time}` : assignment.time || "";
+  }
+
+  function enrollmentBatchLabel(batch) {
+    if (!batch) return "-";
+    const location = batch.location_name ? `${batch.location_name} - ` : "";
+    const schedule = [batch.day, assignmentTime(batch)].filter(Boolean).join(" ");
+    return `${location}${batch.batch_name || ""}${schedule ? ` (${schedule})` : ""}`;
+  }
+
+  function enrollmentBatchCell(batches) {
+    if (!batches.length) return "-";
+    return batches.map(batch => escapeHtml(enrollmentBatchLabel(batch))).join("<br>");
+  }
+
+  function enrollmentPreviewKey(enrollment) {
+    return enrollmentParticipantName(enrollment).trim().toLowerCase();
+  }
+
+  function groupEnrollmentPreviewRows(enrollments) {
+    const groups = [];
+    const groupMap = new Map();
+
+    for (const enrollment of enrollments) {
+      const key = enrollmentPreviewKey(enrollment);
+      if (!groupMap.has(key)) {
+        const group = {
+          participant_name: enrollmentParticipantName(enrollment),
+          cricclub_id: enrollment.cricclub_id || "",
+          program: enrollment.program || "",
+          enrollments: []
+        };
+        groupMap.set(key, group);
+        groups.push(group);
+      }
+
+      const group = groupMap.get(key);
+      if (!group.cricclub_id && enrollment.cricclub_id) group.cricclub_id = enrollment.cricclub_id;
+      if ((!group.program || isOutdoorEnrollment({ product_title: group.program })) && enrollment.program && !isOutdoorEnrollment(enrollment)) {
+        group.program = enrollment.program;
+      }
+      if (!group.program && enrollment.program) group.program = enrollment.program;
+      group.enrollments.push(enrollment);
+    }
+
+    return groups;
+  }
+
+  function enrollmentPaymentDate(enrollment) {
+    return enrollment.next_payment_date
+      ? new Date(enrollment.next_payment_date).toLocaleDateString()
+      : "No billing date";
+  }
+
+  function enrollmentReportDateValue(value) {
+    if (!value) return null;
+    const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function formatEnrollmentReportDate(value) {
+    const date = value instanceof Date ? value : enrollmentReportDateValue(value);
+    return date ? date.toLocaleDateString("en-US", { timeZone: "UTC" }) : "";
+  }
+
+  function addEnrollmentReportDays(value, days) {
+    const date = value instanceof Date ? new Date(value) : enrollmentReportDateValue(value);
+    if (!date) return null;
+    date.setUTCDate(date.getUTCDate() + Number(days || 0));
+    return date;
+  }
+
+  function addEnrollmentBillingInterval(value, interval) {
+    const date = value instanceof Date ? new Date(value) : enrollmentReportDateValue(value);
+    if (!date) return null;
+    const normalizedInterval = String(interval || "").toLowerCase();
+    if (normalizedInterval.includes("quarter")) {
+      date.setUTCMonth(date.getUTCMonth() + 3);
+      return date;
+    }
+    const match = normalizedInterval.match(/(\d+)\s*(day|week|month|year)/);
+    if (!match) return null;
+    const count = Number(match[1]);
+    if (match[2] === "day") date.setUTCDate(date.getUTCDate() + count);
+    if (match[2] === "week") date.setUTCDate(date.getUTCDate() + (count * 7));
+    if (match[2] === "month") date.setUTCMonth(date.getUTCMonth() + count);
+    if (match[2] === "year") date.setUTCFullYear(date.getUTCFullYear() + count);
+    return date;
+  }
+
+  function enrollmentReportAmount(value) {
+    const amount = String(value ?? "").replace(/^\$/, "").trim();
+    if (!amount) return "";
+    const number = Number(amount);
+    return Number.isFinite(number)
+      ? number.toLocaleString("en-US", { style: "currency", currency: "USD" })
+      : `$${amount}`;
+  }
+
+  function enrollmentVacationsForAttempt(enrollment, attempt, periodStart) {
+    if (!attempt) return [];
+    const attemptId = String(attempt.id || "");
+    const vacations = enrollment.vacations || [];
+    const exactMatches = vacations.filter(vacation =>
+      attemptId && String(vacation.billing_attempt_id || "") === attemptId
+    );
+    if (exactMatches.length) return exactMatches;
+
+    const currentAttemptIds = new Set(
+      (enrollment.billing_attempts || []).map(item => String(item.id || "")).filter(Boolean)
+    );
+    const start = enrollmentReportDateValue(periodStart);
+    const end = enrollmentReportDateValue(attempt.date);
+    return vacations.filter(vacation => {
+      const vacationAttemptId = String(vacation.billing_attempt_id || "");
+      if (vacationAttemptId && currentAttemptIds.has(vacationAttemptId)) return false;
+      const vacationStart = enrollmentReportDateValue(vacation.from_date);
+      return start && end && vacationStart && vacationStart >= start && vacationStart <= end;
+    });
+  }
+
+  function renderAdminPaymentHistory(enrollment) {
+    const attempts = [...(enrollment.billing_attempts || [])]
+      .filter(attempt => attempt.date)
+      .sort((a, b) => enrollmentReportDateValue(a.date) - enrollmentReportDateValue(b.date));
+    const payments = [...(enrollment.payment_history || [])]
+      .filter(payment => payment.payment_date)
+      .sort((a, b) => enrollmentReportDateValue(a.payment_date) - enrollmentReportDateValue(b.payment_date))
+      .slice(-5);
+
+    if (!payments.length) return "<p>No completed payment history is available yet.</p>";
+
+    const rows = payments.map(payment => {
+      const paymentDay = enrollmentReportDateValue(payment.payment_date);
+      const paidAttempt = attempts.find(attempt =>
+        payment.billing_attempt_id && String(attempt.id || "") === String(payment.billing_attempt_id)
+      );
+      const periodStart = paidAttempt?.date || paymentDay;
+      const nextAttempt = attempts.find(attempt =>
+        enrollmentReportDateValue(attempt.date) > enrollmentReportDateValue(periodStart)
+      );
+      const vacations = enrollmentVacationsForAttempt(enrollment, nextAttempt, periodStart);
+      const vacationDays = vacations.reduce((total, vacation) => total + Number(vacation.shift_days || 0), 0);
+      const holidayDays = vacations.reduce((total, vacation) => total + Number(vacation.holiday_days || 0), 0);
+      const periodEnd = nextAttempt
+        ? addEnrollmentReportDays(nextAttempt.date, -vacationDays)
+        : addEnrollmentBillingInterval(periodStart, enrollment.payment_frequency);
+
+      return `
+        <tr>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(payment.order_number || payment.order_id || "")}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatEnrollmentReportDate(paymentDay))}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatEnrollmentReportDate(periodStart))}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatEnrollmentReportDate(periodEnd))}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollmentReportAmount(payment.amount || enrollment.next_payment_amount))}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${vacations.map(v => escapeHtml(formatEnrollmentReportDate(v.from_date))).join("<br>")}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${vacations.map(v => escapeHtml(formatEnrollmentReportDate(v.to_date))).join("<br>")}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${vacationDays || 0}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${holidayDays || 0}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatEnrollmentReportDate(nextAttempt?.date))}</td>
+        </tr>`;
+    }).join("");
+
+    return `
+      <div style="overflow-x:auto;margin:0.5rem 0 1rem;">
+        <table style="width:100%;min-width:980px;border-collapse:collapse;">
+          <thead>
+            <tr><th colspan="10" style="border:1px solid #111827;padding:0.6rem;text-align:left;background:#1f2937;color:#fff;">${escapeHtml(enrollment.product_title || "Payment History")}</th></tr>
+            <tr style="background:#f3f4f6;">
+              ${["Order #", "Payment Date", "Period Start Date", "Period End Date", "Payment Amount", "Vacation From", "Vacation To", "# of Days", "Holiday Days", "Next Payment Date"]
+                .map(label => `<th style="border:1px solid #ddd;padding:0.5rem;text-align:left;white-space:nowrap;">${label}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderEnrollmentPreviewGroup(group, groupIndex) {
+    const indoorEnrollments = group.enrollments.filter(enrollment => !isOutdoorEnrollment(enrollment));
+    const outdoorEnrollments = group.enrollments.filter(isOutdoorEnrollment);
+
+    return `
+      <tbody>
+        <tr>
+          <th colspan="5" style="border:1px solid #111827;border-top:12px solid #111827;padding:0.65rem;text-align:left;background:#1f2937;color:#fff;font-size:1.05rem;">${escapeHtml(group.participant_name)}</th>
+        </tr>
+        <tr style="background:#f3f4f6;">
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant Name</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">CricClub ID</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Program Level</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;"></th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;"></th>
+        </tr>
+        <tr>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(group.participant_name)}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(group.cricclub_id)}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(group.program)}</td>
+          <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+          <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+        </tr>
+        ${indoorEnrollments.length ? `
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Indoor Coaching</th>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+          </tr>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 1</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day 2</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Payment Frequency</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Next Payment Date</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Next Payment Amount</th>
+          </tr>
+        ${indoorEnrollments.map((enrollment, enrollmentIndex) => {
+          const assignments = enrollment.current_assignments || [];
+          const reportId = `admin-payment-history-${groupIndex}-indoor-${enrollmentIndex}`;
+          return `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${enrollmentBatchCell(assignments.slice(0, 1))}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${enrollmentBatchCell(assignments.slice(1))}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollment.payment_frequency)}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollmentPaymentDate(enrollment))}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollment.next_payment_amount)}</td>
+            </tr>
+            <tr>
+              <td colspan="5" style="border:1px solid #ddd;padding:0.5rem;"><a href="#" data-admin-payment-history="${reportId}" style="color:#1d4ed8;text-decoration:underline;white-space:nowrap;">Payment History — ${escapeHtml(enrollment.product_title || "Indoor Coaching")}</a></td>
+            </tr>
+            <tr id="${reportId}" style="display:none;">
+              <td colspan="5" style="border:1px solid #ddd;padding:0.5rem;">${renderAdminPaymentHistory(enrollment)}</td>
+            </tr>
+          `;
+        }).join("")}` : ""}
+        ${outdoorEnrollments.length ? `
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Outdoor Coaching</th>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+          </tr>
+          <tr style="background:#f3f4f6;">
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Payment Frequency</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Next Payment Date</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Next Payment Amount</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;"></th>
+          </tr>
+        ${outdoorEnrollments.map((enrollment, enrollmentIndex) => {
+          const reportId = `admin-payment-history-${groupIndex}-outdoor-${enrollmentIndex}`;
+          return `
+          <tr>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${enrollmentBatchCell(enrollment.current_assignments || [])}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollment.payment_frequency)}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollmentPaymentDate(enrollment))}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(enrollment.next_payment_amount)}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"></td>
+          </tr>
+          <tr>
+            <td colspan="5" style="border:1px solid #ddd;padding:0.5rem;"><a href="#" data-admin-payment-history="${reportId}" style="color:#1d4ed8;text-decoration:underline;white-space:nowrap;">Payment History — ${escapeHtml(enrollment.product_title || "Outdoor Coaching")}</a></td>
+          </tr>
+          <tr id="${reportId}" style="display:none;">
+            <td colspan="5" style="border:1px solid #ddd;padding:0.5rem;">${renderAdminPaymentHistory(enrollment)}</td>
+          </tr>
+        `;
+        }).join("")}` : ""}
+        <tr>
+          <td style="border:0;background:#fff;height:12px;padding:0;">&nbsp;</td>
+          <td style="border:0;background:#fff;height:12px;padding:0;"></td>
+          <td style="border:0;background:#fff;height:12px;padding:0;"></td>
+          <td style="border:0;background:#fff;height:12px;padding:0;"></td>
+          <td style="border:0;background:#fff;height:12px;padding:0;"></td>
+        </tr>
+      </tbody>
+    `;
   }
 
   function buildBulkPayload(dryRun) {
@@ -275,7 +1069,8 @@ document.addEventListener("DOMContentLoaded", () => {
       day: batchDay.value,
       time: batchTime.value,
       end_time: batchEndTime.value,
-      comments: batchComments.value.trim()
+      comments: batchComments.value.trim(),
+      is_trial_batch: batchTrial.checked
     };
   }
 
@@ -287,7 +1082,8 @@ document.addEventListener("DOMContentLoaded", () => {
       city: locationCity.value.trim(),
       state: locationState.value.trim(),
       zip: locationZip.value.trim(),
-      country: locationCountry.value.trim()
+      country: locationCountry.value.trim(),
+      is_indoor: locationIndoor.checked
     };
   }
 
@@ -299,6 +1095,7 @@ document.addEventListener("DOMContentLoaded", () => {
     locationState.value = "";
     locationZip.value = "";
     locationCountry.value = "USA";
+    locationIndoor.checked = false;
   }
 
   function clearBatchForm() {
@@ -309,6 +1106,7 @@ document.addEventListener("DOMContentLoaded", () => {
     batchTime.value = "";
     batchEndTime.value = "";
     batchComments.value = "";
+    batchTrial.checked = false;
     document.getElementById("saveBatch").textContent = "Save Batch";
   }
 
@@ -348,8 +1146,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderBulkResults(data) {
     const rows = data.results || [];
+    bulkResultsPanel.style.display = "block";
+    bulkResultsPanel.open = true;
+    bulkResultsPanel.querySelector("summary").textContent = `Bulk Credit ${data.dry_run ? "Preview" : "Result"}`;
     bulkResults.innerHTML = `
-      <h2 style="font-size:1.15rem;">Bulk Credit ${data.dry_run ? "Preview" : "Result"}</h2>
       <p>
         Product: <strong>${data.product_title}</strong> |
         Days: <strong>${data.credit_days}</strong> |
@@ -386,7 +1186,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderCurrentVacations(data) {
     const rows = data.vacations || [];
-    bulkResults.innerHTML = `
+    reportResults.innerHTML = `
       <h2 style="font-size:1.15rem;">Current Vacations</h2>
       <p>
         Report Date: <strong>${data.report_date || ""}</strong> |
@@ -399,7 +1199,9 @@ document.addEventListener("DOMContentLoaded", () => {
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">From</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">To</th>
-            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Days</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Number of Days</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Holiday Days</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Shift Days</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Subscription</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Reason</th>
           </tr>
@@ -411,7 +1213,9 @@ document.addEventListener("DOMContentLoaded", () => {
               <td style="border:1px solid #ddd;padding:0.5rem;">${row.child_name || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${row.from_date || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${row.to_date || ""}</td>
-              <td style="border:1px solid #ddd;padding:0.5rem;">${row.shift_days || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.number_of_days || row.calendar_days || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.holiday_days || 0}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${row.shift_days || 0}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${row.subscription_id || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${row.reason || ""}</td>
             </tr>
@@ -421,7 +1225,49 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
+  function renderEnrollmentPreview(data, customerEmail) {
+    const enrollments = (data.enrollments || []).filter(row =>
+      String(row.status || "").toUpperCase() === "ACTIVE"
+    );
+
+    enrollmentPreviewPanel.style.display = "block";
+    enrollmentPreviewPanel.open = true;
+
+    if (!data.success || !enrollments.length) {
+      enrollmentPreviewPanel.querySelector("summary").textContent = "Enrollment Preview Result";
+      enrollmentPreviewResults.innerHTML = `<p>No active enrollments found for ${escapeHtml(customerEmail)}.</p>`;
+      return;
+    }
+
+    const groups = groupEnrollmentPreviewRows(enrollments);
+    enrollmentPreviewPanel.querySelector("summary").textContent = `Enrollment Preview Result (${groups.length} participant${groups.length === 1 ? "" : "s"})`;
+
+    enrollmentPreviewResults.innerHTML = `
+      <h3 style="font-size:1.05rem;margin:0 0 0.75rem;">My Enrollments Preview</h3>
+      <table style="width:100%;border-collapse:collapse;">
+        ${groups.map(renderEnrollmentPreviewGroup).join("")}
+      </table>
+    `;
+
+    enrollmentPreviewResults.querySelectorAll("[data-admin-payment-history]").forEach(link => {
+      link.addEventListener("click", event => {
+        event.preventDefault();
+        const reportRow = document.getElementById(link.dataset.adminPaymentHistory);
+        if (!reportRow) return;
+        const isHidden = reportRow.style.display === "none";
+        reportRow.style.display = isHidden ? "table-row" : "none";
+        const productLabel = link.dataset.productLabel || link.textContent.replace(/^Hide /, "");
+        link.dataset.productLabel = productLabel;
+        link.textContent = isHidden ? `Hide ${productLabel}` : productLabel;
+      });
+    });
+  }
+
   function renderBatches(batches) {
+    batchResultsPanel.style.display = "block";
+    batchResultsPanel.open = true;
+    batchResultsPanel.querySelector("summary").textContent = `Batches (${batches.length})`;
+
     if (!batches.length) {
       batchResults.innerHTML = "<p>No batches found.</p>";
       return;
@@ -434,7 +1280,9 @@ document.addEventListener("DOMContentLoaded", () => {
           <tr style="background:#f3f4f6;">
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch ID</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Location</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Indoor</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Batch Name</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Trial</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Day</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Start Time</th>
             <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">End Time</th>
@@ -447,7 +1295,9 @@ document.addEventListener("DOMContentLoaded", () => {
             <tr>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_id || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.location_name || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.is_indoor ? "Yes" : "No"}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.batch_name || ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${batch.is_trial_batch ? "Yes" : "No"}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.day || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.time || ""}</td>
               <td style="border:1px solid #ddd;padding:0.5rem;">${batch.end_time || ""}</td>
@@ -476,6 +1326,187 @@ document.addEventListener("DOMContentLoaded", () => {
     if (selectedValue) batchLocation.value = selectedValue;
   }
 
+  function formatDateTime(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+  }
+
+  function renderWaiverSearchResults(waivers) {
+    if (!waivers.length) {
+      waiverSearchResults.innerHTML = "<p>No waivers found.</p>";
+      return;
+    }
+
+    waiverSearchResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+        <thead>
+          <tr>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Signed By</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Participant</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Email</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Status</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Signed</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">PDF</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${waivers.map(waiver => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(`${waiver.parent_first_name || ""} ${waiver.parent_last_name || ""}`.trim())}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(waiver.participant_name || "")}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(waiver.customer_email || "")}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(waiver.status || "")}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatDateTime(waiver.submitted_at || waiver.created_at))}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">
+                <a href="${buildUrl(`/admin/coaching-waivers/${encodeURIComponent(waiver.waiver_id)}/pdf`)}" target="_blank" rel="noopener">Download</a>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderWaiverForms(forms) {
+    if (!forms.length) {
+      waiverFormsResults.innerHTML = "<p>No waiver forms yet. Create one above.</p>";
+      waiverFormsResults.dataset.forms = "[]";
+      return;
+    }
+
+    waiverFormsResults.dataset.forms = JSON.stringify(forms);
+    waiverFormsResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+        <thead>
+          <tr>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Title</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Standalone</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Registration</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Updated</th>
+            <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${forms.map(form => `
+            <tr>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(form.title || "")}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${form.is_active_standalone ? "Active" : ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${form.is_active_registration ? "Active" : ""}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatDateTime(form.updated_at || form.created_at))}</td>
+              <td style="border:1px solid #ddd;padding:0.5rem;">
+                <button type="button" data-edit-waiver-form="${escapeHtml(form.form_id)}" style="padding:0.45rem 0.65rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">Edit</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function clearWaiverFormEditor() {
+    waiverFormId.value = "";
+    waiverFormTitleInput.value = "";
+    setWaiverEditorHtml("");
+    waiverFormActiveStandalone.checked = false;
+    waiverFormActiveRegistration.checked = false;
+    document.getElementById("saveWaiverForm").textContent = "Create New Waiver Form";
+  }
+
+  function buildWaiverFormPayload() {
+    return {
+      title: waiverFormTitleInput.value.trim(),
+      waiver_text: getWaiverEditorHtml(),
+      is_active_standalone: waiverFormActiveStandalone.checked,
+      is_active_registration: waiverFormActiveRegistration.checked
+    };
+  }
+
+  async function loadWaiverFormsList() {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading waiver forms...";
+
+    try {
+      const response = await fetch(buildUrl("/admin/waiver-forms"));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load waiver forms.");
+
+      renderWaiverForms(data.forms || []);
+      adminStatus.textContent = "Waiver forms loaded.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load waiver forms.";
+    }
+  }
+
+  function renderTermsForms(forms) {
+    if (!forms.length) {
+      termsFormsResults.innerHTML = "<p>No saved terms forms yet. Load the default terms above, review them, and save.</p>";
+      termsFormsResults.dataset.forms = "[]";
+      return;
+    }
+
+    termsFormsResults.dataset.forms = JSON.stringify(forms);
+    termsFormsResults.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+        <thead><tr>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Title</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Registration</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Updated</th>
+          <th style="border:1px solid #ddd;padding:0.5rem;text-align:left;">Action</th>
+        </tr></thead>
+        <tbody>${forms.map(form => `
+          <tr>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(form.title || "")}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${form.is_active_registration ? "Active" : ""}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;">${escapeHtml(formatDateTime(form.updated_at || form.created_at))}</td>
+            <td style="border:1px solid #ddd;padding:0.5rem;"><button type="button" data-edit-terms-form="${escapeHtml(form.form_id)}" style="padding:0.45rem 0.65rem;border:0;border-radius:4px;background:#0f766e;color:#fff;">Edit</button></td>
+          </tr>`).join("")}</tbody>
+      </table>`;
+  }
+
+  function clearTermsFormEditor() {
+    termsFormId.value = "";
+    termsFormTitleInput.value = "";
+    setTermsEditorHtml("");
+    termsFormActiveRegistration.checked = false;
+    document.getElementById("saveTermsForm").textContent = "Create New Terms Form";
+  }
+
+  async function loadTermsFormsList() {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading coaching terms forms...";
+    try {
+      const response = await fetch(buildUrl("/admin/coaching-terms"));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load coaching terms forms.");
+      renderTermsForms(data.forms || []);
+      adminStatus.textContent = "Coaching terms forms loaded.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load coaching terms forms.";
+    }
+  }
+
+  async function loadWaiverSearchResults() {
+    if (!requireKey()) return;
+    adminStatus.textContent = "Loading waivers...";
+
+    try {
+      const response = await fetch(buildUrl("/admin/coaching-waivers", {
+        q: waiverSearch.value.trim(),
+        status: waiverStatusFilter.value,
+        limit: "50"
+      }));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load waivers.");
+
+      renderWaiverSearchResults(data.waivers || []);
+      adminStatus.textContent = "Waivers loaded.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load waivers.";
+    }
+  }
+
   saveAdminKey.addEventListener("click", () => {
     if (!getAdminKey()) {
       keyStatus.textContent = "Enter a key.";
@@ -483,7 +1514,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     sessionStorage.setItem("sealAdminKey", getAdminKey());
     keyStatus.textContent = "Key saved for this browser session.";
+    loadHolidays().catch(err => { adminStatus.textContent = err.message; });
   });
+
+  document.getElementById("addHoliday").addEventListener("click", async () => {
+    if (!requireKey()) return;
+    if (!holidayName.value.trim() || !holidayFrom.value || !holidayTo.value) {
+      adminStatus.textContent = "Enter holiday name, from date, and to date.";
+      return;
+    }
+
+    try {
+      const response = await fetch(buildUrl("/admin/holidays"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: holidayName.value.trim(),
+          from_date: holidayFrom.value,
+          to_date: holidayTo.value
+        })
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not add holiday.");
+      holidayName.value = "";
+      holidayFrom.value = "";
+      holidayTo.value = "";
+      await loadHolidays();
+      adminStatus.textContent = "Holiday added.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not add holiday.";
+    }
+  });
+
+  if (getAdminKey()) loadHolidays().catch(err => { adminStatus.textContent = err.message; });
 
   document.querySelectorAll(".admin-report").forEach(button => {
     button.addEventListener("click", () => {
@@ -510,6 +1573,197 @@ document.addEventListener("DOMContentLoaded", () => {
     window.open(buildUrl("/admin/product-participants", { product_title: reportProduct.value }), "_blank");
   });
 
+  document.getElementById("searchWaivers").addEventListener("click", loadWaiverSearchResults);
+  document.getElementById("loadRecentWaivers").addEventListener("click", () => {
+    waiverSearch.value = "";
+    loadWaiverSearchResults();
+  });
+  waiverSearch.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadWaiverSearchResults();
+    }
+  });
+  document.getElementById("loadWaiverForms").addEventListener("click", loadWaiverFormsList);
+  document.getElementById("clearWaiverForm").addEventListener("click", clearWaiverFormEditor);
+  document.getElementById("loadLiabilityWaiverTemplate").addEventListener("click", () => {
+    waiverFormTitleInput.value = liabilityWaiverTemplateTitle;
+    setWaiverEditorHtml(liabilityWaiverTemplateText);
+    adminStatus.textContent = "Liability waiver template loaded. Review, choose active placement, then save.";
+  });
+  waiverRichEditor.addEventListener("input", syncWaiverEditorToSource);
+  document.querySelectorAll("[data-waiver-command]").forEach(button => {
+    button.addEventListener("click", () => execWaiverCommand(button.dataset.waiverCommand));
+  });
+  waiverEditorAdvanced.addEventListener("change", () => {
+    document.querySelectorAll(".waiver-editor-advanced-tools").forEach(panel => {
+      panel.style.display = waiverEditorAdvanced.checked ? "flex" : "none";
+    });
+  });
+  waiverFormatBlock.addEventListener("change", () => {
+    waiverRichEditor.focus();
+    document.execCommand("formatBlock", false, waiverFormatBlock.value);
+    syncWaiverEditorToSource();
+  });
+  waiverMergeTag.addEventListener("change", () => {
+    if (!waiverMergeTag.value) return;
+    waiverRichEditor.focus();
+    document.execCommand("insertText", false, waiverMergeTag.value);
+    waiverMergeTag.value = "";
+    syncWaiverEditorToSource();
+  });
+  toggleWaiverSource.addEventListener("click", () => {
+    if (waiverSourceMode) {
+      setWaiverEditorHtml(waiverFormTextInput.value);
+      waiverFormTextInput.style.display = "none";
+      waiverRichEditor.style.display = "block";
+      toggleWaiverSource.textContent = "HTML Source";
+      waiverSourceMode = false;
+    } else {
+      syncWaiverEditorToSource();
+      waiverRichEditor.style.display = "none";
+      waiverFormTextInput.style.display = "block";
+      toggleWaiverSource.textContent = "Visual Editor";
+      waiverSourceMode = true;
+    }
+  });
+
+  document.getElementById("saveWaiverForm").addEventListener("click", async () => {
+    if (!requireKey()) return;
+
+    const payload = buildWaiverFormPayload();
+    if (!payload.title || !payload.waiver_text) {
+      adminStatus.textContent = "Waiver form title and text are required.";
+      return;
+    }
+
+    const editing = Boolean(waiverFormId.value);
+    adminStatus.textContent = editing ? "Updating waiver form..." : "Creating waiver form...";
+
+    try {
+      const response = await fetch(buildUrl(editing ? `/admin/waiver-forms/${waiverFormId.value}` : "/admin/waiver-forms"), {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not save waiver form.");
+
+      adminStatus.textContent = editing ? "Waiver form updated." : "Waiver form created.";
+      clearWaiverFormEditor();
+      await loadWaiverFormsList();
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not save waiver form.";
+    }
+  });
+
+  waiverFormsResults.addEventListener("click", event => {
+    const editButton = event.target.closest("[data-edit-waiver-form]");
+    if (!editButton) return;
+
+    const forms = JSON.parse(waiverFormsResults.dataset.forms || "[]");
+    const form = forms.find(row => String(row.form_id) === String(editButton.dataset.editWaiverForm));
+    if (!form) return;
+
+    waiverFormId.value = form.form_id || "";
+    waiverFormTitleInput.value = form.title || "";
+    setWaiverEditorHtml(form.waiver_text || "");
+    waiverFormActiveStandalone.checked = Boolean(form.is_active_standalone);
+    waiverFormActiveRegistration.checked = Boolean(form.is_active_registration);
+    document.getElementById("saveWaiverForm").textContent = "Update Waiver Form";
+    adminStatus.textContent = "Editing waiver form.";
+  });
+
+  document.getElementById("loadTermsForms").addEventListener("click", loadTermsFormsList);
+  document.getElementById("clearTermsForm").addEventListener("click", clearTermsFormEditor);
+  termsRichEditor.addEventListener("input", syncTermsEditorToSource);
+  document.querySelectorAll("[data-terms-command]").forEach(button => {
+    button.addEventListener("click", () => execTermsCommand(button.dataset.termsCommand));
+  });
+  termsEditorAdvanced.addEventListener("change", () => {
+    document.querySelectorAll(".terms-editor-advanced-tools").forEach(panel => {
+      panel.style.display = termsEditorAdvanced.checked ? "flex" : "none";
+    });
+  });
+  termsFormatBlock.addEventListener("change", () => {
+    termsRichEditor.focus();
+    document.execCommand("formatBlock", false, termsFormatBlock.value);
+    syncTermsEditorToSource();
+  });
+  toggleTermsSource.addEventListener("click", () => {
+    if (termsSourceMode) {
+      setTermsEditorHtml(termsFormTextInput.value);
+      termsFormTextInput.style.display = "none";
+      termsRichEditor.style.display = "block";
+      toggleTermsSource.textContent = "HTML Source";
+      termsSourceMode = false;
+    } else {
+      syncTermsEditorToSource();
+      termsRichEditor.style.display = "none";
+      termsFormTextInput.style.display = "block";
+      toggleTermsSource.textContent = "Visual Editor";
+      termsSourceMode = true;
+    }
+  });
+  document.getElementById("loadCoachingTermsTemplate").addEventListener("click", async () => {
+    adminStatus.textContent = "Loading current coaching terms...";
+    try {
+      const response = await fetch(buildPublicUrl("/registration-terms/active"));
+      const data = await response.json();
+      if (!data.success || !data.form) throw new Error(data.error || "Could not load coaching terms.");
+      termsFormTitleInput.value = data.form.title || "";
+      setTermsEditorHtml(data.form.terms_text || "");
+      termsFormActiveRegistration.checked = true;
+      adminStatus.textContent = "Current coaching terms loaded. Review and save to make them admin-managed.";
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load coaching terms.";
+    }
+  });
+
+  document.getElementById("saveTermsForm").addEventListener("click", async () => {
+    if (!requireKey()) return;
+    const payload = {
+      title: termsFormTitleInput.value.trim(),
+      terms_text: getTermsEditorHtml(),
+      is_active_registration: termsFormActiveRegistration.checked
+    };
+    if (!payload.title || !payload.terms_text) {
+      adminStatus.textContent = "Terms title and wording are required.";
+      return;
+    }
+
+    const editing = Boolean(termsFormId.value);
+    adminStatus.textContent = editing ? "Updating coaching terms..." : "Creating coaching terms...";
+    try {
+      const response = await fetch(buildUrl(editing ? `/admin/coaching-terms/${termsFormId.value}` : "/admin/coaching-terms"), {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not save coaching terms.");
+      adminStatus.textContent = editing ? "Coaching terms updated." : "Coaching terms created.";
+      clearTermsFormEditor();
+      await loadTermsFormsList();
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not save coaching terms.";
+    }
+  });
+
+  termsFormsResults.addEventListener("click", event => {
+    const editButton = event.target.closest("[data-edit-terms-form]");
+    if (!editButton) return;
+    const forms = JSON.parse(termsFormsResults.dataset.forms || "[]");
+    const form = forms.find(row => String(row.form_id) === String(editButton.dataset.editTermsForm));
+    if (!form) return;
+    termsFormId.value = form.form_id || "";
+    termsFormTitleInput.value = form.title || "";
+    setTermsEditorHtml(form.terms_text || "");
+    termsFormActiveRegistration.checked = Boolean(form.is_active_registration);
+    document.getElementById("saveTermsForm").textContent = "Update Terms Form";
+    adminStatus.textContent = "Editing coaching terms form.";
+  });
+
   document.getElementById("showCurrentVacations").addEventListener("click", async () => {
     if (!requireKey()) return;
     adminStatus.textContent = "Loading current vacations...";
@@ -526,12 +1780,36 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  document.getElementById("loadEnrollmentPreview").addEventListener("click", async () => {
+    const email = previewCustomerEmail.value.trim();
+    if (!email) {
+      adminStatus.textContent = "Enter customer email.";
+      return;
+    }
+
+    adminStatus.textContent = "Loading enrollment preview...";
+    enrollmentPreviewPanel.style.display = "none";
+    enrollmentPreviewResults.innerHTML = "";
+
+    try {
+      const response = await fetch(buildPublicUrl("/enrollments", { email }));
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Could not load enrollments.");
+
+      adminStatus.textContent = "Enrollment preview loaded.";
+      renderEnrollmentPreview(data, email);
+    } catch (err) {
+      adminStatus.textContent = err.message || "Could not load enrollment preview.";
+    }
+  });
+
   loadReportProducts.addEventListener("click", loadSubscriptionProducts);
   loadProducts.addEventListener("click", loadSubscriptionProducts);
 
   async function loadBatchList() {
     if (!requireKey()) return;
     adminStatus.textContent = "Loading batches...";
+    batchResultsPanel.style.display = "none";
 
     try {
       const [batchResponse, locationResponse] = await Promise.all([
@@ -629,6 +1907,7 @@ document.addEventListener("DOMContentLoaded", () => {
       batchTime.value = batch.time || "";
       batchEndTime.value = batch.end_time || "";
       batchComments.value = batch.comments || "";
+      batchTrial.checked = Boolean(batch.is_trial_batch);
       document.getElementById("saveBatch").textContent = "Update Batch";
       adminStatus.textContent = "Editing batch.";
       return;

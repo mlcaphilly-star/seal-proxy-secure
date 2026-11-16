@@ -1,0 +1,462 @@
+<div
+  class="vacation-credit-form"
+  style="max-width:600px;margin:0 auto;padding:2em;border:1px solid #ccc;border-radius:10px;"
+>
+  <h2>Vacation Credit Request</h2>
+
+  <form id="vacationForm">
+    <!-- Product Dropdown -->
+    <label for="product">Select Product:</label>
+    <select id="product" name="product" required style="width:100%;margin-bottom:1em;">
+      <option value="">Loading products...</option>
+    </select>
+
+    <!-- Participant Dropdown -->
+    <label for="child">Select Participant:</label>
+    <select id="child" name="child" required disabled style="width:100%;margin-bottom:1em;">
+      <option value="">Select a product first</option>
+    </select>
+
+    <!-- From Date -->
+    <label for="from_date">From Date:</label>
+    <input type="date" id="from_date" name="from_date" required style="width:100%;margin-bottom:0.25em;">
+    <div id="fromDateError" style="color:red; font-size:0.85em; margin-bottom:1em;"></div>
+
+    <!-- To Date -->
+    <label for="to_date">To Date:</label>
+    <input type="date" id="to_date" name="to_date" required style="width:100%;margin-bottom:1em;">
+    <div id="toDateError" style="color:red; font-size:0.85em; margin-bottom:1em;"></div>
+
+    <!-- Number of Days -->
+    <label>Vacation Days (excluding holidays):</label>
+    <input type="number" id="vacation_days" name="vacation_days" readonly style="width:100%;margin-bottom:1em;">
+    <div id="holidaySummary" style="font-size:0.9em;margin-top:-0.75em;margin-bottom:1em;color:#555;"></div>
+
+    <!-- Reason -->
+    <label for="reason">Reason:</label>
+    <textarea id="reason" name="reason" rows="3" style="width:100%;margin-bottom:1em;"></textarea>
+
+    <!-- Terms and Conditions -->
+    <div style="margin-top: 1em;">
+      <input type="checkbox" id="terms" required>
+      <label for="terms">
+        I have read and agree to the <a href="#vacation-terms" target="_blank">Vacation Credit Policy</a>.
+      </label>
+    </div>
+
+    <div
+      id="vacation-terms"
+      style="margin-top:1em; font-size: 0.9em; background: #f9f9f9; padding: 1em; border: 1px solid #ccc;"
+    >
+      <strong>Vacation Credit Policy</strong><br>
+      1. No coaching attendance during the vacation period.<br>
+      2. Minimum 21 consecutive days required.<br>
+      3. Submit at least 1 day before next charge.<br>
+      4. Payment will be postponed accordingly.<br>
+      5. One vacation request per child at a time.<br>
+      6. No credits for past dates.<br>
+      7. Confirmation will be sent once processed.
+    </div>
+
+    <button
+      type="submit"
+      style="margin-top:1.5em;background:#000;color:#fff;padding:0.75em 1.5em;border:none;border-radius:5px;"
+    >
+      Submit Request
+    </button>
+  </form>
+
+  <div id="formStatus" style="margin-top:1em;font-weight:bold;"></div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", async () => {
+  const productSelect = document.getElementById("product");
+  const childSelect = document.getElementById("child");
+  const customerId = {{ customer.id | json }};
+  const customerEmail = {{ customer.email | json }};
+  const fromDate = document.getElementById("from_date");
+  const toDate = document.getElementById("to_date");
+  const vacationDays = document.getElementById("vacation_days");
+  const holidaySummary = document.getElementById("holidaySummary");
+  const formStatus = document.getElementById("formStatus");
+  const fromDateError = document.getElementById("fromDateError");
+  const toDateError = document.getElementById("toDateError");
+  const form = document.getElementById("vacationForm");
+
+  const proxyBase = "https://seal-proxy-secure.onrender.com"; // Your proxy
+
+  let childList = [];
+  let enrollmentsByProduct = {};
+  let holidayList = [];
+
+   function getPropertyValue(properties, keyBase) {
+    const possibleKeys = [keyBase, keyBase + ":", keyBase + "::"];
+    for (const k of possibleKeys) {
+      const prop = properties.find(p => p.key.trim() === k.trim());
+      if (prop && prop.value) return prop.value.trim();
+    }
+    return null;
+  }
+
+
+  function clearErrors() {
+    fromDateError.textContent = "";
+    toDateError.textContent = "";
+  }
+
+  function validateDates() {
+    clearErrors();
+    const fromVal = fromDate.value;
+    const toVal = toDate.value;
+    if (!fromVal || !toVal) return false;
+
+    const from = new Date(fromVal);
+    const to = new Date(toVal);
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    if (from <= today) {
+      fromDateError.textContent = "Vacation start date must be a future date.";
+      fromDate.focus();
+      return false;
+    }
+
+    if (to <= from) {
+      toDateError.textContent = "Vacation end date must be after the start date.";
+      toDate.focus();
+      return false;
+    }
+
+    return true;
+  }
+
+  function getDateRange(fromValue, toValue) {
+    const dates = [];
+    const current = new Date(`${fromValue}T00:00:00Z`);
+    const end = new Date(`${toValue}T00:00:00Z`);
+    while (current <= end) {
+      dates.push(current.toISOString().slice(0, 10));
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+    return dates;
+  }
+
+  function getHolidayCalculation(fromValue, toValue) {
+    const vacationDates = new Set(getDateRange(fromValue, toValue));
+    const overlapping = holidayList
+      .map(holiday => {
+        const days = getDateRange(holiday.from_date, holiday.to_date)
+          .filter(date => vacationDates.has(date));
+        return days.length ? { ...holiday, overlapping_days: days.length, dates: days } : null;
+      })
+      .filter(Boolean);
+    const holidayDates = new Set(overlapping.flatMap(holiday => holiday.dates));
+    return {
+      calendarDays: vacationDates.size,
+      holidayDays: holidayDates.size,
+      shiftDays: vacationDates.size - holidayDates.size,
+      holidays: overlapping
+    };
+  }
+
+  function calculateDays() {
+    if (!validateDates()) {
+      vacationDays.value = "";
+      return;
+    }
+    const from = new Date(fromDate.value);
+    const to = new Date(toDate.value);
+    const calculation = getHolidayCalculation(fromDate.value, toDate.value);
+    vacationDays.value = calculation.shiftDays;
+    holidaySummary.textContent = `${calculation.calendarDays} calendar day(s), ${calculation.holidayDays} holiday day(s) excluded. Credit days: ${calculation.shiftDays}.`;
+  }
+
+  fromDate.addEventListener("change", calculateDays);
+  toDate.addEventListener("change", calculateDays);
+
+  try {
+    const holidaysResponse = await fetch(`${proxyBase}/holidays`);
+    const holidaysData = await holidaysResponse.json();
+    if (holidaysData.success) holidayList = holidaysData.holidays || [];
+  } catch (err) {
+    console.error("Error loading holiday schedule:", err);
+  }
+
+  function getProductName(enrollment) {
+    return (
+      enrollment.product_title ||
+      enrollment.product_name ||
+      enrollment.item_title ||
+      enrollment.program ||
+      "Subscription"
+    ).trim();
+  }
+
+  function getParticipantName(enrollment) {
+    return (
+      enrollment.participant_name ||
+      `${enrollment.child_first_name || ""} ${enrollment.child_last_name || ""}`.trim()
+    ).trim();
+  }
+
+  function renderParticipantOptions(productName) {
+    childSelect.innerHTML = '<option value="">Select a participant</option>';
+    childSelect.disabled = true;
+    childList = [];
+
+    const productEnrollments = enrollmentsByProduct[productName] || [];
+    for (const enrollment of productEnrollments) {
+      const participantName = getParticipantName(enrollment);
+      if (!participantName || !enrollment.subscription_id) continue;
+
+      const nextBillingDate = enrollment.next_payment_date
+        ? new Date(enrollment.next_payment_date).toLocaleDateString()
+        : "No billing date";
+
+      const optionValue = `${participantName}___${enrollment.subscription_id}`;
+      const optionLabel = `${participantName} (Sub #${enrollment.subscription_id}) - Next billing: ${nextBillingDate}`;
+
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionLabel;
+      childSelect.appendChild(option);
+
+      childList.push({
+        value: optionValue,
+        subscriptionId: enrollment.subscription_id,
+        billingAttemptId: enrollment.next_billing_attempt_id || null,
+        firstBillingAttemptDate: enrollment.next_payment_date || null
+      });
+    }
+
+    if (childSelect.options.length === 1) {
+      childSelect.innerHTML = "<option>No participants found for selected product</option>";
+      return;
+    }
+
+    childSelect.disabled = false;
+  }
+
+  productSelect.addEventListener("change", () => {
+    if (!productSelect.value) {
+      childSelect.innerHTML = "<option>Select a product first</option>";
+      childSelect.disabled = true;
+      childList = [];
+      return;
+    }
+
+    renderParticipantOptions(productSelect.value);
+  });
+
+  // 2026-04-25: Load active enrollments from proxy so inactive Seal subscriptions do not show in vacation dropdown.
+  try {
+    const enrollmentsResponse = await fetch(`${proxyBase}/enrollments?email=${encodeURIComponent(customerEmail)}`);
+    const enrollmentsData = await enrollmentsResponse.json();
+    const enrollments = enrollmentsData.enrollments || [];
+
+    if (!enrollmentsData.success || !enrollments.length) {
+      productSelect.innerHTML = "<option>No active subscriptions found</option>";
+      childSelect.innerHTML = "<option>No active subscriptions found</option>";
+      return;
+    }
+
+    enrollmentsByProduct = {};
+
+    for (const enrollment of enrollments) {
+      if ((enrollment.status || "").toUpperCase() !== "ACTIVE") continue;
+
+      const productName = getProductName(enrollment);
+      const participantName = getParticipantName(enrollment);
+      if (!productName || !participantName || !enrollment.subscription_id) continue;
+
+      if (!enrollmentsByProduct[productName]) enrollmentsByProduct[productName] = [];
+      enrollmentsByProduct[productName].push(enrollment);
+    }
+
+    const productNames = Object.keys(enrollmentsByProduct).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+
+    if (!productNames.length) {
+      productSelect.innerHTML = "<option>No products found in active subscriptions</option>";
+      childSelect.innerHTML = "<option>No participants found in active subscriptions</option>";
+      return;
+    }
+
+    productSelect.innerHTML = '<option value="">Select a product</option>';
+    for (const productName of productNames) {
+      enrollmentsByProduct[productName].sort((a, b) =>
+        getParticipantName(a).localeCompare(getParticipantName(b), undefined, { sensitivity: "base" })
+      );
+
+      const option = document.createElement("option");
+      option.value = productName;
+      option.textContent = productName;
+      productSelect.appendChild(option);
+    }
+  } catch (err) {
+    console.error("Error loading products and participants:", err);
+    productSelect.innerHTML = "<option>Error loading products</option>";
+    childSelect.innerHTML = "<option>Error loading participants</option>";
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>\"']/g, char => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function renderConfirmation(billingAttempts, shiftedDays, holidayDaysExcluded = 0, vacation = {}) {
+  const unpaidAttempts = (billingAttempts || []).filter(b => b.status !== "completed");
+  const requestedDays = vacation.calendar_days || vacation.shift_days || "";
+  const creditDays = vacation.shift_days || shiftedDays || "";
+  const productTitle = vacation.product_title || "Subscription";
+  const holidayDetails = Array.isArray(vacation.holiday_details) ? vacation.holiday_details : [];
+  const nextPaymentDate = unpaidAttempts[0]?.date ? new Date(unpaidAttempts[0].date).toDateString() : "Not available";
+
+  const container = document.createElement('div');
+  container.style.marginTop = '1em';
+  container.innerHTML = `<h3>Vacation scheduled successfully.</h3>
+    <table style="width:100%;border-collapse: collapse; border: 1px solid #ccc; margin-bottom:1em;">
+      <tbody>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Participant</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(vacation.child_name)}</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Product</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(productTitle)}</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Vacation Dates</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(vacation.from_date)} to ${escapeHtml(vacation.to_date)}</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Requested Vacation Days</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(requestedDays)}</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Holiday Closure Days Excluded</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(holidayDaysExcluded)}</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Credit Days After Holidays</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(creditDays)} day(s)</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Payment Schedule Shift</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(creditDays)} day(s)</td></tr>
+        <tr><th style="border:1px solid #ccc;padding:8px;text-align:left;">Next Payment Date</th><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(nextPaymentDate)}</td></tr>
+      </tbody>
+    </table>
+    <p>Payment schedule shifted by ${creditDays} day(s)${holidayDaysExcluded ? `; ${holidayDaysExcluded} holiday closure day(s) excluded.` : '.'}</p>
+    ${holidayDetails.length ? `
+      <h4>Holiday Days Excluded</h4>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #ccc;margin-bottom:1em;">
+        <thead><tr style="background:#eee;"><th style="border:1px solid #ccc;padding:8px;text-align:left;">Holiday</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">From</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">To</th><th style="border:1px solid #ccc;padding:8px;text-align:left;">Days Excluded</th></tr></thead>
+        <tbody>${holidayDetails.map(holiday => `<tr><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(holiday.name)}</td><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(holiday.overlap_from || holiday.from_date)}</td><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(holiday.overlap_to || holiday.to_date)}</td><td style="border:1px solid #ccc;padding:8px;">${escapeHtml(holiday.overlapping_days || 0)}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
+    <table style="width:100%;border-collapse: collapse; border: 1px solid #ccc;">
+      <thead>
+        <tr style="background:#eee;">
+          <th style="border:1px solid #ccc;padding:8px;">Original Billing Date</th>
+          <th style="border:1px solid #ccc;padding:8px;">Days Shifted</th>
+          <th style="border:1px solid #ccc;padding:8px;">New Billing Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${unpaidAttempts.slice(0,5).map(b => {
+          const newDate = new Date(b.date);
+          const originalDate = new Date(newDate);
+          originalDate.setDate(originalDate.getDate() - shiftedDays);
+          return `<tr>
+                    <td style="border:1px solid #ccc;padding:8px;">${originalDate.toDateString()}</td>
+                    <td style="border:1px solid #ccc;padding:8px;">${creditDays} day(s)</td>
+                    <td style="border:1px solid #ccc;padding:8px;">${newDate.toDateString()}</td>
+                  </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+  return container;
+}
+
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearErrors();
+
+    if (!validateDates()) return;
+
+    formStatus.innerText = "Submitting...";
+
+    if (!productSelect.value) {
+      formStatus.innerText = "Please select a product.";
+      return;
+    }
+
+    const selectedValue = childSelect.value;
+    if (!selectedValue) {
+      formStatus.innerText = "Please select a participant.";
+      return;
+    }
+
+    const [childName] = selectedValue.split("___");
+    const from = fromDate.value;
+    const to = toDate.value;
+    const days = parseInt(vacationDays.value);
+    const reason = document.getElementById("reason").value;
+
+    if (days < 21) {
+      formStatus.innerText = "Vacation requests must be at least 21 consecutive days.";
+      return;
+    }
+
+    const childInfo = childList.find(c => c.value === selectedValue);
+    if (!childInfo) {
+      formStatus.innerText = "Participant info not found.";
+      return;
+    }
+
+    try {
+      // 1. Save vacation
+      const vacationRes = await fetch(`${proxyBase}/vacation-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id: customerId,
+          child_name: childName,
+          from_date: from,
+          to_date: to,
+          shift_days: days,
+          reason,
+          subscription_id: childInfo.subscriptionId,
+          billing_attempt_id: childInfo.billingAttemptId
+        })
+      });
+
+      const vacationResult = await vacationRes.json();
+      if (!vacationResult.success) {
+        formStatus.innerText = vacationResult.error || "We could not submit your vacation request. Please try again.";
+        return;
+      }
+
+      if (!vacationResult.schedule_update?.success) {
+        console.warn("Vacation saved, but schedule update needs manual review:", vacationResult.schedule_update);
+        form.remove();
+        formStatus.style.color = "#b45309";
+        formStatus.innerText = "Your vacation request was saved, but we could not update the payment schedule automatically. Our team has been notified and will update it manually.";
+        return;
+      }
+
+      // 2. Re-fetch subscription to get updated billing attempts
+      const subDetailResponse = await fetch(`${proxyBase}/seal-subscription?id=${childInfo.subscriptionId}`);
+      const subDetailData = await subDetailResponse.json();
+      if (!subDetailData.success) {
+        formStatus.innerText = "Your vacation request was saved, but we could not show the updated payment schedule. Please refresh your enrollments later.";
+        return;
+      }
+
+      form.remove();
+      formStatus.innerText = "";
+      const effectiveShiftDays = vacationResult.schedule_update.effective_shift_days ?? days;
+      const holidayDaysExcluded = vacationResult.schedule_update.holiday_days_excluded || 0;
+      const confirmation = renderConfirmation(
+        subDetailData.payload.billing_attempts || [],
+        effectiveShiftDays,
+        holidayDaysExcluded,
+        vacationResult.vacation || {}
+      );
+      document.querySelector('.vacation-credit-form').appendChild(confirmation);
+
+    } catch (err) {
+      console.error("Submission error:", err);
+      formStatus.innerText = "We could not submit your vacation request. Please check your connection and try again.";
+    }
+  });
+});
+</script>

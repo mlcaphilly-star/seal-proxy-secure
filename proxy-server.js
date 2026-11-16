@@ -112,17 +112,49 @@ const daysBetweenInclusive = (fromDate, toDate) => {
   return Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
 };
 
-const VACATION_CLOSURE_PERIODS = [
-  { name: 'Thanksgiving', from_date: '2026-11-26', to_date: '2026-11-29' },
-  { name: 'Christmas/New Year', from_date: '2026-12-23', to_date: '2027-01-03' }
-];
+const getDateRange = (fromDate, toDate) => {
+  const dates = [];
+  const current = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
 
-const getVacationClosureDays = (fromDate, toDate) =>
-  VACATION_CLOSURE_PERIODS.reduce((total, closure) => {
-    const overlapFrom = fromDate > closure.from_date ? fromDate : closure.from_date;
-    const overlapTo = toDate < closure.to_date ? toDate : closure.to_date;
-    return total + (overlapFrom <= overlapTo ? daysBetweenInclusive(overlapFrom, overlapTo) : 0);
-  }, 0);
+  while (current <= end) {
+    dates.push(current.toISOString().slice(0, 10));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return dates;
+};
+
+const getHolidayCalculation = (fromDate, toDate, holidays = []) => {
+  const vacationDates = new Set(getDateRange(fromDate, toDate));
+  const overlappingHolidays = holidays
+    .map(holiday => {
+      const holidayDates = getDateRange(holiday.from_date, holiday.to_date)
+        .filter(date => vacationDates.has(date));
+
+      return holidayDates.length
+        ? { ...holiday, overlapping_days: holidayDates.length, dates: holidayDates }
+        : null;
+    })
+    .filter(Boolean);
+
+  const holidayDates = new Set(
+    overlappingHolidays.flatMap(holiday => holiday.dates)
+  );
+
+  return {
+    calendar_days: vacationDates.size,
+    holiday_days: holidayDates.size,
+    shift_days: vacationDates.size - holidayDates.size,
+    holidays: overlappingHolidays.map(holiday => ({
+      id: holiday.id,
+      name: holiday.name,
+      from_date: holiday.from_date,
+      to_date: holiday.to_date,
+      overlapping_days: holiday.overlapping_days
+    }))
+  };
+};
 
 const previousDateString = (dateValue) => addDaysToDateString(dateValue, -1);
 
@@ -239,6 +271,30 @@ CREATE TABLE IF NOT EXISTS bulk_credit_requests (
 pool.query(createBulkCreditTableSQL)
   .then(() => console.log('bulk_credit_requests table ready'))
   .catch(err => console.error('Error creating bulk_credit_requests table:', err));
+
+const createHolidaysTableSQL = `
+CREATE TABLE IF NOT EXISTS holidays (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  from_date DATE NOT NULL,
+  to_date DATE NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT holidays_valid_dates CHECK (to_date >= from_date)
+);
+`;
+pool.query(createHolidaysTableSQL)
+  .then(() => console.log('holidays table ready'))
+  .catch(err => console.error('Error creating holidays table:', err));
+
+pool.query(`
+  ALTER TABLE vacation_requests
+    ADD COLUMN IF NOT EXISTS number_of_days INT,
+    ADD COLUMN IF NOT EXISTS calendar_days INT,
+    ADD COLUMN IF NOT EXISTS holiday_days INT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS holiday_details JSONB
+`)
+  .then(() => console.log('vacation calculation columns ready'))
+  .catch(err => console.error('Error adding vacation calculation columns:', err));
 
 const createLocationsTableSQL = `
 CREATE TABLE IF NOT EXISTS locations (
@@ -1329,7 +1385,11 @@ app.get('/admin/current-vacations', async (req, res) => {
         child_name,
         from_date::text,
         to_date::text,
+        number_of_days,
+        calendar_days,
+        holiday_days,
         shift_days,
+        holiday_details,
         reason,
         product_title,
         subscription_id,
@@ -1363,6 +1423,84 @@ app.post('/admin/vacations/backfill-products', async (req, res) => {
   } catch (err) {
     console.error('Vacation product backfill error:', err);
     return res.status(500).json({ success: false, error: 'Failed to backfill vacation products.' });
+  }
+});
+
+// -------------------- Holiday Schedule --------------------
+app.get('/holidays', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, from_date::text, to_date::text
+      FROM holidays
+      ORDER BY from_date, name
+    `);
+
+    return res.json({ success: true, holidays: rows });
+  } catch (err) {
+    console.error('Holiday schedule error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load holiday schedule.' });
+  }
+});
+
+app.get('/admin/holidays', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, from_date::text, to_date::text, created_at
+      FROM holidays
+      ORDER BY from_date, name
+    `);
+
+    return res.json({ success: true, holidays: rows });
+  } catch (err) {
+    console.error('Admin holidays error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load holidays.' });
+  }
+});
+
+app.post('/admin/holidays', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  const name = String(req.body.name || '').trim();
+  const fromDate = req.body.from_date;
+  const toDate = req.body.to_date;
+
+  if (!name || !fromDate || !toDate) {
+    return res.status(400).json({ success: false, error: 'Holiday name, from date, and to date are required.' });
+  }
+
+  if (toDate < fromDate) {
+    return res.status(400).json({ success: false, error: 'Holiday end date must be on or after the start date.' });
+  }
+
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO holidays (name, from_date, to_date)
+      VALUES ($1, $2, $3)
+      RETURNING id, name, from_date::text, to_date::text, created_at
+    `, [name, fromDate, toDate]);
+
+    return res.status(201).json({ success: true, holiday: rows[0] });
+  } catch (err) {
+    console.error('Admin holiday creation error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to create holiday.' });
+  }
+});
+
+app.delete('/admin/holidays/:id', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const result = await pool.query('DELETE FROM holidays WHERE id = $1', [req.params.id]);
+    if (!result.rowCount) {
+      return res.status(404).json({ success: false, error: 'Holiday not found.' });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Admin holiday deletion error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete holiday.' });
   }
 });
 
@@ -2886,7 +3024,8 @@ app.get('/enrollments', async (req, res) => {
     if (enrollments.length) {
       const subscriptionIds = enrollments.map(enrollment => String(enrollment.subscription_id));
       const { rows: vacationRows } = await pool.query(
-        `SELECT subscription_id, billing_attempt_id, from_date::text, to_date::text, shift_days
+        `SELECT subscription_id, billing_attempt_id, from_date::text, to_date::text,
+                number_of_days, calendar_days, holiday_days, shift_days, holiday_details
          FROM vacation_requests
          WHERE subscription_id = ANY($1::text[])
          ORDER BY from_date ASC`,
@@ -2936,7 +3075,8 @@ app.get('/vacations', async (req, res) => {
 
   try {
     const sql = `
-      SELECT from_date::text, to_date::text, shift_days, reason, product_title
+      SELECT from_date::text, to_date::text, shift_days, reason, product_title,
+             number_of_days, calendar_days, holiday_days, holiday_details
       FROM vacation_requests
       WHERE customer_id = $1 AND child_name = $2
       ORDER BY from_date DESC
@@ -4916,7 +5056,7 @@ app.post('/vacation-request', async (req, res) => {
     billing_attempt_id
   } = req.body;
 
-  if (!customer_id || !child_name || !from_date || !to_date || !shift_days || !subscription_id || (billing_attempt_id === undefined)) {
+  if (!customer_id || !child_name || !from_date || !to_date || shift_days === undefined || shift_days === null || shift_days === '' || !subscription_id || (billing_attempt_id === undefined)) {
     return res.status(400).json({ success: false, error: 'Please complete all required fields and try again.' });
   }
 
@@ -4935,18 +5075,28 @@ app.post('/vacation-request', async (req, res) => {
     });
   }
 
-  if (Number(shift_days) < 21) {
-    return res.status(400).json({
-      success: false,
-      error: 'Vacation requests must be at least 21 consecutive days.'
-    });
-  }
-
-  const requestedShiftDays = Number(shift_days);
-  const holidayDaysExcluded = getVacationClosureDays(from_date, to_date);
-  const effectiveShiftDays = Math.max(0, requestedShiftDays - holidayDaysExcluded);
-
   try {
+    const holidayResult = await pool.query(`
+      SELECT id, name, from_date::text, to_date::text
+      FROM holidays
+      WHERE from_date <= $2::date
+        AND to_date >= $1::date
+      ORDER BY from_date, name
+    `, [from_date, to_date]);
+    const calculation = getHolidayCalculation(from_date, to_date, holidayResult.rows);
+
+    if (calculation.shift_days < 21) {
+      return res.status(400).json({
+        success: false,
+        error: `Vacation must include at least 21 non-holiday days. Your selected dates contain ${calculation.calendar_days} calendar days, including ${calculation.holiday_days} holiday days, leaving ${calculation.shift_days} credit days.`,
+        calculation
+      });
+    }
+
+    const requestedShiftDays = calculation.calendar_days;
+    const holidayDaysExcluded = calculation.holiday_days;
+    const effectiveShiftDays = calculation.shift_days;
+
     // 1) Fetch subscription details from Seal
     const sealRes = await fetch(`https://app.sealsubscriptions.com/shopify/merchant/api/subscription?id=${encodeURIComponent(subscription_id)}`, {
       headers: { 'X-Seal-Token': SEAL_TOKEN, 'Content-Type': 'application/json' }
@@ -5026,11 +5176,11 @@ app.post('/vacation-request', async (req, res) => {
     // 4) Insert vacation request
     const insertSql = `
       INSERT INTO vacation_requests
-      (customer_id, child_name, from_date, to_date, shift_days, reason, product_title, subscription_id, billing_attempt_id, email_sent,email_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'N',$10)
-      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, product_title, subscription_id, billing_attempt_id,email_id
+      (customer_id, child_name, from_date, to_date, shift_days, reason, product_title, subscription_id, billing_attempt_id, email_sent,email_id, number_of_days, calendar_days, holiday_days, holiday_details)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'N',$10,$11,$11,$12,$13::jsonb)
+      RETURNING id, customer_id, child_name, from_date::text, to_date::text, shift_days, reason, product_title, subscription_id, billing_attempt_id,email_id, number_of_days, calendar_days, holiday_days, holiday_details
     `;
-    const insertParams = [customer_id, child_name, from_date, to_date, shift_days, reason || null, productTitle || null, subscription_id, billing_attempt_id || null,customerEmail];
+    const insertParams = [customer_id, child_name, from_date, to_date, effectiveShiftDays, reason || null, productTitle || null, subscription_id, billing_attempt_id || null, customerEmail, calculation.calendar_days, calculation.holiday_days, JSON.stringify(calculation.holidays)];
     const insertResult = await pool.query(insertSql, insertParams);
     const savedVacation = insertResult.rows[0];
 
@@ -5170,9 +5320,8 @@ app.post('/vacation-request', async (req, res) => {
         requested_shift_days: requestedShiftDays,
         holiday_days_excluded: holidayDaysExcluded,
         effective_shift_days: effectiveShiftDays,
-        excluded_closures: VACATION_CLOSURE_PERIODS.filter(closure =>
-          from_date <= closure.to_date && to_date >= closure.from_date
-        )
+        calculation,
+        excluded_holidays: calculation.holidays
       },
       vacation: savedVacation,
       id: savedVacation.id

@@ -1,0 +1,572 @@
+<div id="my-enrollments" style="margin:20px;">
+  <h2 style="color:#2c3e50;">My Enrollments</h2>
+  <p>Loading your enrollment data...</p>
+</div>
+
+<div id="vacation-details-container" style="margin:20px;">
+  <!-- Vacation details will be injected here -->
+</div>
+
+<div id="holiday-schedule-container" style="margin:20px;">
+  <!-- Holiday schedule will be injected here -->
+</div>
+
+<style>
+  table.enrollments, table.vacations, table.payment-history {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, sans-serif;
+    margin-bottom: 20px;
+  }
+
+  table.enrollments th, table.enrollments td,
+  table.vacations th, table.vacations td,
+  table.payment-history th, table.payment-history td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+  }
+
+  table.enrollments th, table.vacations th, table.payment-history th {
+    background-color: #3498db;
+    color: white;
+  }
+
+  table.enrollments .participant-title th {
+    background-color: #1f2937;
+    color: white;
+    border-top: 4px solid #111827;
+    font-size: 1.05rem;
+    padding: 10px 8px;
+  }
+
+  table.enrollments .participant-title:not(:first-child) th {
+    border-top-width: 12px;
+  }
+
+  table.enrollments .enrollment-spacer td {
+    border: 0;
+    background: white;
+    height: 12px;
+    padding: 0;
+  }
+
+  table.enrollments tr:nth-child(even),
+  table.vacations tr:nth-child(even) {
+    background-color: #f2f2f2;
+  }
+
+  table.enrollments tr:hover,
+  table.vacations tr:hover {
+    background-color: #d6eaf8;
+  }
+
+  button.show-vacation,
+  #prev-page, #next-page {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin-top: 5px;
+  }
+
+  button.show-vacation:hover,
+  #prev-page:hover, #next-page:hover {
+    background-color: #2980b9;
+  }
+
+  #vacation-details-container h3 {
+    color: #2c3e50;
+  }
+
+  #vacation-details-container span {
+    margin-left: 10px;
+    font-weight: bold;
+  }
+
+  .payment-history-wrap {
+    overflow-x: auto;
+    margin: 8px 0 16px;
+  }
+
+  table.payment-history {
+    min-width: 980px;
+    margin: 0;
+  }
+
+  table.payment-history .payment-report-title th {
+    background: #1f2937;
+  }
+
+  table.payment-history .due-next td:first-child {
+    font-weight: bold;
+  }
+
+  a.show-payment-history {
+    color: #1d4ed8;
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  const enrollmentsContainer = document.getElementById('my-enrollments');
+  const vacationContainer = document.getElementById('vacation-details-container');
+  const holidayContainer = document.getElementById('holiday-schedule-container');
+  const customerEmail = {{ customer.email | json }};
+  const customerId = {{ customer.id | json }};
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+  }
+
+  function isOutdoorEnrollment(enrollment) {
+    const product = String(enrollment.product_title || enrollment.program || '').toLowerCase();
+    return product.includes('outdoor');
+  }
+
+  function isParticipantNameProduct(enrollment) {
+    const product = String(enrollment.product_title || enrollment.program || '').toLowerCase();
+    return product.includes('outdoor') || product.includes("women");
+  }
+
+  function enrollmentParticipantName(enrollment) {
+    const childName = `${enrollment.child_first_name || ''} ${enrollment.child_last_name || ''}`.trim();
+    return isParticipantNameProduct(enrollment)
+      ? enrollment.participant_name || childName
+      : childName || enrollment.participant_name || '';
+  }
+
+  function batchTime(batch) {
+    if (!batch) return '';
+    return batch.end_time ? `${batch.time || ''}-${batch.end_time}` : batch.time || '';
+  }
+
+  function batchLabel(batch) {
+    if (!batch) return '-';
+    const location = batch.location_name ? `${batch.location_name} - ` : '';
+    const time = batchTime(batch);
+    const schedule = [batch.day, time].filter(Boolean).join(' ');
+    return `${location}${batch.batch_name || ''}${schedule ? ` (${schedule})` : ''}`;
+  }
+
+  function batchCell(batches) {
+    if (!batches.length) return '-';
+    return batches.map(batch => escapeHtml(batchLabel(batch))).join('<br>');
+  }
+
+  function enrollmentKey(enrollment) {
+    return enrollmentParticipantName(enrollment).trim().toLowerCase();
+  }
+
+  function groupEnrollments(enrollments) {
+    const groups = [];
+    const groupMap = new Map();
+
+    for (const enrollment of enrollments) {
+      const key = enrollmentKey(enrollment);
+      if (!groupMap.has(key)) {
+        const group = {
+          participant_name: enrollmentParticipantName(enrollment),
+          cricclub_id: enrollment.cricclub_id || '',
+          program: enrollment.program || '',
+          enrollments: []
+        };
+        groupMap.set(key, group);
+        groups.push(group);
+      }
+
+      const group = groupMap.get(key);
+      if (!group.cricclub_id && enrollment.cricclub_id) group.cricclub_id = enrollment.cricclub_id;
+      if ((!group.program || isOutdoorEnrollment({ product_title: group.program })) && enrollment.program && !isOutdoorEnrollment(enrollment)) {
+        group.program = enrollment.program;
+      }
+      if (!group.program && enrollment.program) group.program = enrollment.program;
+      group.enrollments.push(enrollment);
+    }
+
+    return groups;
+  }
+
+  function paymentDate(enrollment) {
+    return enrollment.next_payment_date
+      ? new Date(enrollment.next_payment_date).toLocaleDateString()
+      : 'No billing date';
+  }
+
+  function dateValue(value) {
+    if (!value) return null;
+    const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function formatReportDate(value) {
+    const date = value instanceof Date ? value : dateValue(value);
+    return date ? date.toLocaleDateString('en-US', { timeZone: 'UTC' }) : '';
+  }
+
+  function addReportDays(value, days) {
+    const date = value instanceof Date ? new Date(value) : dateValue(value);
+    if (!date) return null;
+    date.setUTCDate(date.getUTCDate() + Number(days || 0));
+    return date;
+  }
+
+  function addBillingInterval(value, interval) {
+    const date = value instanceof Date ? new Date(value) : dateValue(value);
+    if (!date) return null;
+    const normalizedInterval = String(interval || '').toLowerCase();
+    if (normalizedInterval.includes('quarter')) {
+      date.setUTCMonth(date.getUTCMonth() + 3);
+      return date;
+    }
+    const match = normalizedInterval.match(/(\d+)\s*(day|week|month|year)/);
+    if (!match) return null;
+    const count = Number(match[1]);
+    if (match[2] === 'day') date.setUTCDate(date.getUTCDate() + count);
+    if (match[2] === 'week') date.setUTCDate(date.getUTCDate() + (count * 7));
+    if (match[2] === 'month') date.setUTCMonth(date.getUTCMonth() + count);
+    if (match[2] === 'year') date.setUTCFullYear(date.getUTCFullYear() + count);
+    return date;
+  }
+
+  function reportAmount(value) {
+    const amount = String(value ?? '').replace(/^\$/, '').trim();
+    if (!amount) return '';
+    const number = Number(amount);
+    return Number.isFinite(number)
+      ? number.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+      : `$${amount}`;
+  }
+
+  function vacationsForAttempt(enrollment, attempt, periodStart) {
+    if (!attempt) return [];
+    const attemptId = String(attempt.id || '');
+    const vacations = enrollment.vacations || [];
+    const exactMatches = vacations.filter(vacation =>
+      attemptId && String(vacation.billing_attempt_id || '') === attemptId
+    );
+    if (exactMatches.length) return exactMatches;
+
+    // Seal can replace a billing attempt ID when a vacation reschedules it.
+    // Match only orphaned vacation IDs within this subscription period.
+    const currentAttemptIds = new Set(
+      (enrollment.billing_attempts || []).map(item => String(item.id || '')).filter(Boolean)
+    );
+    const start = dateValue(periodStart);
+    const end = dateValue(attempt.date);
+    return vacations.filter(vacation => {
+      const vacationAttemptId = String(vacation.billing_attempt_id || '');
+      if (vacationAttemptId && currentAttemptIds.has(vacationAttemptId)) return false;
+      const vacationStart = dateValue(vacation.from_date);
+      return start && end && vacationStart && vacationStart >= start && vacationStart <= end;
+    });
+  }
+
+  function renderPaymentReport(enrollment) {
+    const attempts = [...(enrollment.billing_attempts || [])]
+      .filter(attempt => attempt.date)
+      .sort((a, b) => dateValue(a.date) - dateValue(b.date));
+    const payments = [...(enrollment.payment_history || [])]
+      .filter(payment => payment.payment_date)
+      .sort((a, b) => dateValue(a.payment_date) - dateValue(b.payment_date))
+      .slice(-5);
+
+    if (!payments.length) return '<p>No completed payment history is available yet.</p>';
+
+    const paidRows = payments.map(payment => {
+      const paymentDay = dateValue(payment.payment_date);
+      const paidAttempt = attempts.find(attempt =>
+        payment.billing_attempt_id && String(attempt.id || '') === String(payment.billing_attempt_id)
+      );
+      const periodStart = paidAttempt?.date || paymentDay;
+      const nextAttempt = attempts.find(attempt => dateValue(attempt.date) > dateValue(periodStart));
+      const vacations = vacationsForAttempt(enrollment, nextAttempt, periodStart);
+      const vacationDays = vacations.reduce((total, vacation) => total + Number(vacation.shift_days || 0), 0);
+      const holidayDays = vacations.reduce((total, vacation) => total + Number(vacation.holiday_days || 0), 0);
+      const periodEnd = nextAttempt
+        ? addReportDays(nextAttempt.date, -vacationDays)
+        : addBillingInterval(periodStart, enrollment.payment_frequency);
+
+      return `
+        <tr>
+          <td>${escapeHtml(payment.order_number || payment.order_id || '')}</td>
+          <td>${escapeHtml(formatReportDate(paymentDay))}</td>
+          <td>${escapeHtml(formatReportDate(periodStart))}</td>
+          <td>${escapeHtml(formatReportDate(periodEnd))}</td>
+          <td>${escapeHtml(reportAmount(payment.amount || enrollment.next_payment_amount))}</td>
+          <td>${vacations.map(v => escapeHtml(formatReportDate(v.from_date))).join('<br>')}</td>
+          <td>${vacations.map(v => escapeHtml(formatReportDate(v.to_date))).join('<br>')}</td>
+          <td>${vacationDays || 0}</td>
+          <td>${holidayDays || 0}</td>
+          <td>${escapeHtml(formatReportDate(nextAttempt?.date))}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="payment-history-wrap">
+        <table class="payment-history">
+          <thead>
+            <tr class="payment-report-title"><th colspan="10">${escapeHtml(enrollment.product_title || 'Payment History')}</th></tr>
+            <tr>
+              <th>Order #</th><th>Payment Date</th><th>Period Start Date</th><th>Period End Date</th>
+              <th>Payment Amount</th><th>Vacation From</th><th>Vacation To</th><th># of Days</th><th>Holiday Days</th><th>Next Payment Date</th>
+            </tr>
+          </thead>
+          <tbody>${paidRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderParticipantBlock(group, groupIndex) {
+    const participantName = group.participant_name;
+    const indoorEnrollments = group.enrollments.filter(enrollment => !isOutdoorEnrollment(enrollment));
+    const outdoorEnrollments = group.enrollments.filter(isOutdoorEnrollment);
+
+    return `
+      <tbody class="enrollment-group">
+        <tr class="participant-title">
+          <th colspan="5">${escapeHtml(participantName)}</th>
+        </tr>
+        <tr>
+          <th>Participant Name</th>
+          <th>CricClub ID</th>
+          <th>Program Level</th>
+          <th>Vacation Details</th>
+          <th></th>
+        </tr>
+        <tr>
+          <td>${escapeHtml(participantName)}</td>
+          <td>${escapeHtml(group.cricclub_id)}</td>
+          <td>${escapeHtml(group.program)}</td>
+          <td>
+            <button
+              class="show-vacation"
+              data-child="${escapeHtml(participantName)}"
+              data-customer="${customerId}"
+            >
+              Show
+            </button>
+          </td>
+          <td></td>
+        </tr>
+        ${indoorEnrollments.length ? `
+          <tr>
+            <th>Indoor Coaching</th>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <th>Day 1</th>
+            <th>Day 2</th>
+            <th>Payment Frequency</th>
+            <th>Next Payment Date</th>
+            <th>Next Payment Amount</th>
+          </tr>
+        ${indoorEnrollments.map((enrollment, enrollmentIndex) => {
+          const assignments = enrollment.current_assignments || [];
+          const reportId = `payment-history-${groupIndex}-indoor-${enrollmentIndex}`;
+          return `
+            <tr>
+              <td>${batchCell(assignments.slice(0, 1))}</td>
+              <td>${batchCell(assignments.slice(1))}</td>
+              <td>${escapeHtml(enrollment.payment_frequency)}</td>
+              <td>${escapeHtml(paymentDate(enrollment))}</td>
+              <td>${escapeHtml(enrollment.next_payment_amount)}</td>
+            </tr>
+            <tr>
+              <td colspan="5"><a href="#" class="show-payment-history" data-target="${reportId}">Payment History — ${escapeHtml(enrollment.product_title || 'Indoor Coaching')}</a></td>
+            </tr>
+            <tr id="${reportId}" style="display:none;">
+              <td colspan="5">${renderPaymentReport(enrollment)}</td>
+            </tr>
+          `;
+        }).join('')}` : ''}
+        ${outdoorEnrollments.length ? `
+          <tr>
+            <th>Outdoor Coaching</th>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <th>Day</th>
+            <th>Payment Frequency</th>
+            <th>Next Payment Date</th>
+            <th>Next Payment Amount</th>
+            <th></th>
+          </tr>
+        ${outdoorEnrollments.map((enrollment, enrollmentIndex) => {
+          const reportId = `payment-history-${groupIndex}-outdoor-${enrollmentIndex}`;
+          return `
+          <tr>
+            <td>${batchCell(enrollment.current_assignments || [])}</td>
+            <td>${escapeHtml(enrollment.payment_frequency)}</td>
+            <td>${escapeHtml(paymentDate(enrollment))}</td>
+            <td>${escapeHtml(enrollment.next_payment_amount)}</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td colspan="5"><a href="#" class="show-payment-history" data-target="${reportId}">Payment History — ${escapeHtml(enrollment.product_title || 'Outdoor Coaching')}</a></td>
+          </tr>
+          <tr id="${reportId}" style="display:none;">
+            <td colspan="5">${renderPaymentReport(enrollment)}</td>
+          </tr>
+        `;
+        }).join('')}` : ''}
+        <tr class="enrollment-spacer">
+          <td>&nbsp;</td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      </tbody>
+    `;
+  }
+
+  if (!customerEmail) {
+    enrollmentsContainer.innerHTML = '<p>Please log in to see your enrollments.</p>';
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://seal-proxy-secure.onrender.com/enrollments?email=${encodeURIComponent(customerEmail)}`);
+    const data = await response.json();
+
+    const holidayResponse = await fetch('https://seal-proxy-secure.onrender.com/holidays');
+    const holidayData = await holidayResponse.json();
+    const holidays = holidayData.holidays || [];
+    holidayContainer.innerHTML = `
+      <h3>Holidays Schedule</h3>
+      <table class="payment-history">
+        <thead><tr><th>Holiday Name</th><th>From Date</th><th>To Date</th></tr></thead>
+        <tbody>${holidays.map(holiday => `
+          <tr><td>${escapeHtml(holiday.name)}</td><td>${escapeHtml(holiday.from_date)}</td><td>${escapeHtml(holiday.to_date)}</td></tr>
+        `).join('')}</tbody>
+      </table>
+      <p><strong>Note:</strong> If your vacation overlaps a holiday, holiday days are excluded from vacation credit.</p>
+    `;
+
+    const activeEnrollments = (data.enrollments || []).filter(sub =>
+      (sub.status || '').toUpperCase() === 'ACTIVE'
+    );
+
+    if (!data.success || !activeEnrollments.length) {
+      enrollmentsContainer.innerHTML = '<p>No active enrollments found.</p>';
+      return;
+    }
+
+    const groupedEnrollments = groupEnrollments(activeEnrollments);
+
+    // Build enrollments table
+    let enrollHtml = `
+      <table class="enrollments">
+        ${groupedEnrollments.map(renderParticipantBlock).join('')}
+      </table>
+    `;
+    enrollmentsContainer.innerHTML = enrollHtml;
+
+    // Vacation button functionality
+    let currentPage = 1;
+    const perPage = 10;
+
+    async function loadVacations(childName, page) {
+      vacationContainer.innerHTML = '<p>Loading vacation details...</p>';
+      try {
+        const vacResponse = await fetch(`https://seal-proxy-secure.onrender.com/vacations?customer_id=${customerId}&child_name=${encodeURIComponent(childName)}`);
+        const vacData = await vacResponse.json();
+
+        if (!vacData.success || !vacData.vacations.length) {
+          vacationContainer.innerHTML = `<p>No vacation data found for ${childName}.</p>`;
+          return;
+        }
+
+        const sortedVacations = vacData.vacations.sort((a, b) => new Date(b.from_date) - new Date(a.from_date));
+        const totalPages = Math.ceil(sortedVacations.length / perPage);
+        const start = (page - 1) * perPage;
+        const end = start + perPage;
+        const pageVacations = sortedVacations.slice(start, end);
+
+        // Build vacation table
+        let vacHtml = `<h3>Vacations for ${childName}</h3>`;
+        vacHtml += `
+          <table class="vacations">
+            <thead>
+              <tr>
+                <th>From Date</th>
+                <th>To Date</th>
+                <th>Number of Days</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        pageVacations.forEach(v => {
+          vacHtml += `
+            <tr>
+              <td>${v.from_date}</td>
+              <td>${v.to_date}</td>
+              <td>${v.shift_days}</td>
+              <td>${v.reason || '-'}</td>
+            </tr>
+          `;
+        });
+        vacHtml += '</tbody></table>';
+
+        vacHtml += '<div style="margin-top:10px;">';
+        if (page > 1) vacHtml += `<button id="prev-page">Previous</button>`;
+        if (page < totalPages) vacHtml += `<button id="next-page" style="margin-left:5px;">Next</button>`;
+        vacHtml += ` <span>Page ${page} of ${totalPages}</span></div>`;
+
+        vacationContainer.innerHTML = vacHtml;
+
+        if (page > 1) document.getElementById('prev-page').addEventListener('click', () => loadVacations(childName, page - 1));
+        if (page < totalPages) document.getElementById('next-page').addEventListener('click', () => loadVacations(childName, page + 1));
+
+      } catch (err) {
+        console.error('Error fetching vacations', err);
+        vacationContainer.innerHTML = '<p>Error loading vacation details. Please try again later.</p>';
+      }
+    }
+
+    document.querySelectorAll('.show-vacation').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const childName = e.target.dataset.child;
+        currentPage = 1;
+        loadVacations(childName, currentPage);
+      });
+    });
+
+    document.querySelectorAll('.show-payment-history').forEach(btn => {
+      btn.addEventListener('click', event => {
+        event.preventDefault();
+        const reportRow = document.getElementById(btn.dataset.target);
+        if (!reportRow) return;
+        const isHidden = reportRow.style.display === 'none';
+        reportRow.style.display = isHidden ? 'table-row' : 'none';
+        const productLabel = btn.dataset.productLabel || btn.textContent.replace(/^Hide /, '');
+        btn.dataset.productLabel = productLabel;
+        btn.textContent = isHidden ? `Hide ${productLabel}` : productLabel;
+      });
+    });
+
+  } catch (err) {
+    console.error('Error loading enrollments', err);
+    enrollmentsContainer.innerHTML = '<p>Error loading enrollments. Please try again later.</p>';
+  }
+});
+</script>
