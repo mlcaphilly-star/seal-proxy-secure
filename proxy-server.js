@@ -5174,6 +5174,7 @@ app.post('/vacation-request', async (req, res) => {
           from_date <= closure.to_date && to_date >= closure.from_date
         )
       },
+      vacation: savedVacation,
       id: savedVacation.id
     });
 
