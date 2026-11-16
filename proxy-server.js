@@ -112,6 +112,18 @@ const daysBetweenInclusive = (fromDate, toDate) => {
   return Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
 };
 
+const VACATION_CLOSURE_PERIODS = [
+  { name: 'Thanksgiving', from_date: '2026-11-26', to_date: '2026-11-29' },
+  { name: 'Christmas/New Year', from_date: '2026-12-23', to_date: '2027-01-03' }
+];
+
+const getVacationClosureDays = (fromDate, toDate) =>
+  VACATION_CLOSURE_PERIODS.reduce((total, closure) => {
+    const overlapFrom = fromDate > closure.from_date ? fromDate : closure.from_date;
+    const overlapTo = toDate < closure.to_date ? toDate : closure.to_date;
+    return total + (overlapFrom <= overlapTo ? daysBetweenInclusive(overlapFrom, overlapTo) : 0);
+  }, 0);
+
 const previousDateString = (dateValue) => addDaysToDateString(dateValue, -1);
 
 const parseBoolean = (value) =>
@@ -4837,7 +4849,9 @@ async function sendVacationScheduleUpdateAlert(context = {}) {
     ['Subscription ID', context.subscription_id],
     ['Billing Attempt ID', context.billing_attempt_id],
     ['Vacation Dates', `${context.from_date || ''} to ${context.to_date || ''}`],
-    ['Shift Days', context.shift_days],
+    ['Requested Vacation Days', context.requested_shift_days || context.shift_days],
+    ['Holiday Days Excluded', context.holiday_days_excluded],
+    ['Payment Schedule Shift Days', context.shift_days],
     ['Original Payment Date', context.original_payment_date],
     ['Expected Payment Date', context.expected_payment_date],
     ['Actual Payment Date', context.actual_payment_date],
@@ -4927,6 +4941,10 @@ app.post('/vacation-request', async (req, res) => {
       error: 'Vacation requests must be at least 21 consecutive days.'
     });
   }
+
+  const requestedShiftDays = Number(shift_days);
+  const holidayDaysExcluded = getVacationClosureDays(from_date, to_date);
+  const effectiveShiftDays = Math.max(0, requestedShiftDays - holidayDaysExcluded);
 
   try {
     // 1) Fetch subscription details from Seal
@@ -5032,7 +5050,9 @@ app.post('/vacation-request', async (req, res) => {
       subscription_id,
       from_date,
       to_date,
-      shift_days
+      shift_days: effectiveShiftDays,
+      requested_shift_days: requestedShiftDays,
+      holiday_days_excluded: holidayDaysExcluded
     };
 
     const nextAttempt = getNextUnpaidBillingAttempt(billingAttempts);
@@ -5049,7 +5069,7 @@ app.post('/vacation-request', async (req, res) => {
         ...alertBase,
         billing_attempt_id,
         original_payment_date: nextAttempt.date,
-        expected_payment_date: addDaysToDateString(nextAttempt.date, shift_days),
+        expected_payment_date: addDaysToDateString(nextAttempt.date, effectiveShiftDays),
         alert_reason: 'The upcoming unpaid billing attempt is missing an ID, so it could not be rescheduled.'
       });
       scheduleUpdate = {
@@ -5059,14 +5079,17 @@ app.post('/vacation-request', async (req, res) => {
         message: 'Upcoming billing attempt is missing an ID.'
       };
     } else {
-      const newPaymentDate = addDaysToDateString(nextAttempt.date, shift_days);
+      const newPaymentDate = addDaysToDateString(nextAttempt.date, effectiveShiftDays);
       scheduleUpdate = {
         attempted: true,
         success: false,
         status: 'failed',
         billing_attempt_id: nextAttempt.id,
         original_payment_date: nextAttempt.date,
-        expected_payment_date: newPaymentDate
+        expected_payment_date: newPaymentDate,
+        requested_shift_days: requestedShiftDays,
+        holiday_days_excluded: holidayDaysExcluded,
+        effective_shift_days: effectiveShiftDays
       };
 
       try {
@@ -5142,7 +5165,15 @@ app.post('/vacation-request', async (req, res) => {
     return res.json({ 
       success: true, 
       updated: { billing_attempts: updatedBillingAttempts },
-      schedule_update: scheduleUpdate,
+      schedule_update: {
+        ...scheduleUpdate,
+        requested_shift_days: requestedShiftDays,
+        holiday_days_excluded: holidayDaysExcluded,
+        effective_shift_days: effectiveShiftDays,
+        excluded_closures: VACATION_CLOSURE_PERIODS.filter(closure =>
+          from_date <= closure.to_date && to_date >= closure.from_date
+        )
+      },
       id: savedVacation.id
     });
 
