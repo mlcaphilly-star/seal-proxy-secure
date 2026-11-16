@@ -4850,7 +4850,7 @@ async function sendVacationScheduleUpdateAlert(context = {}) {
     ['Billing Attempt ID', context.billing_attempt_id],
     ['Vacation Dates', `${context.from_date || ''} to ${context.to_date || ''}`],
     ['Requested Vacation Days', context.requested_shift_days || context.shift_days],
-    ['Holiday Days Excluded', context.holiday_days_excluded],
+    ['Holiday Closure Days Excluded', context.holiday_days_excluded],
     ['Payment Schedule Shift Days', context.shift_days],
     ['Original Payment Date', context.original_payment_date],
     ['Expected Payment Date', context.expected_payment_date],
